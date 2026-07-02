@@ -64,6 +64,13 @@ class ShortcutsVdfError(Exception):
 _shortcuts_vdf_error = False
 
 
+# Explicit (connect, read) timeouts for every outbound request - a stalled
+# connection must never hang a scan cycle indefinitely.
+HTTP_TIMEOUT = (5, 30)
+# The artwork proxy (Render free tier) has cold starts well over 30s.
+HTTP_TIMEOUT_SLOW = (5, 90)
+
+
 launcher_icons = {
     "Epic Games": "5255885",
     "Amazon Games": "5255884",
@@ -531,7 +538,7 @@ def get_movies(game_name):
         download_url = video.get('download_url')
         if download_url:
             try:
-                response = requests.get(download_url)
+                response = requests.get(download_url, timeout=HTTP_TIMEOUT)
                 if response.status_code == 200:
                     with open(file_path, 'wb') as f:
                         f.write(response.content)
@@ -552,7 +559,7 @@ def get_movies(game_name):
 
         for _ in range(REQUEST_RETRIES):
             try:
-                response = requests.get('https://steamdeckrepo.com/api/posts/all', verify=certifi.where())
+                response = requests.get('https://steamdeckrepo.com/api/posts/all', verify=certifi.where(), timeout=HTTP_TIMEOUT)
                 if response.status_code == 200:
                     data = response.json().get('posts', [])
                     break
@@ -656,7 +663,7 @@ def get_steam_fallback_artwork(steam_store_appid, art_type):
         url = base_url + file
         decky_plugin.logger.info(f"Trying to fetch {art_type} from {url}")
         try:
-            response = requests.get(url, stream=True)
+            response = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
             if response.status_code == 200:
                 decky_plugin.logger.info(f"Successfully fetched {art_type} from {url}")
                 return b64encode(response.content).decode("utf-8")
@@ -870,8 +877,16 @@ def create_new_entry(exe, appname, launchoptions, startingdir, launcher):
 def add_launchers():
     def try_add(shortcut_dir, name, launch_options, start_dir, override="NonSteamLaunchers"):
         if shortcut_dir:
-            result = create_new_entry(shortcut_dir, name, launch_options, start_dir, override)
-            track_game(name, "Launcher" if result else "Launcher")  # Track the game regardless of result
+            result = False
+            try:
+                result = create_new_entry(shortcut_dir, name, launch_options, start_dir, override)
+            except ShortcutsVdfError:
+                raise
+            except Exception as e:
+                decky_plugin.logger.error(f"Entry creation for {name} failed: {e}")
+            # AUDIT M25: track the launcher even if entry creation failed - a
+            # network/artwork error must not count toward removal detection.
+            track_game(name, "Launcher")
             return result
         return False
 
@@ -958,7 +973,7 @@ def download_artwork(game_id, art_type, dimensions=None):
     decky_plugin.logger.info(f"Sending request to: {url}")
 
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=HTTP_TIMEOUT_SLOW)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.RequestException as e:
@@ -969,11 +984,13 @@ def download_artwork(game_id, art_type, dimensions=None):
         if game_id == 5297303 and dimensions == "600x900":
             image_url = "https://cdn2.steamgriddb.com/thumb/eea5656d3244578f512f32cb4043792a.jpg"
         else:
-            image_url = artwork['thumb']
+            image_url = artwork.get('thumb')
+        if not image_url:
+            continue
 
         decky_plugin.logger.info(f"Downloading image from: {image_url}")
         try:
-            response = requests.get(image_url, stream=True)
+            response = requests.get(image_url, stream=True, timeout=HTTP_TIMEOUT)
             response.raise_for_status()
             if response.status_code == 200:
                 image_bytes = response.content
@@ -996,7 +1013,9 @@ def download_artwork(game_id, art_type, dimensions=None):
         except requests.exceptions.RequestException as e:
             decky_plugin.logger.info(f"Error downloading image: {e}")
             if art_type == "icons":
-                return download_artwork(game_id, "icons_ico", dimensions)
+                # "icons_ico" returns a single value; callers of "icons"
+                # unpack a (b64, path) tuple - keep the shape.
+                return (download_artwork(game_id, "icons_ico", dimensions), None)
 
     return (None, None) if art_type == "icons" else None
 
@@ -1010,7 +1029,7 @@ def get_game_id(game_name):
     for attempt in range(retry_attempts + 1):  # Try once initially, then retry if it fails
         try:
             url = f"{proxy_url}/search/{game_name}"
-            response = requests.get(url)
+            response = requests.get(url, timeout=HTTP_TIMEOUT_SLOW)
             response.raise_for_status()
             data = response.json()
             if data['data']:
