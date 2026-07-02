@@ -236,25 +236,26 @@ export const LauncherInstallModal: VFC<LauncherInstallModalProps> = ({ closeModa
           </div>
 
           {currentLaunchers.map(({ name, label }) => (
-            <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                <span>{label}</span>
-                <span
-                  style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    marginLeft: '10px',
-                    backgroundColor:
-                      launcherStatus?.installedLaunchers.includes(name) ? 'green' : 'red',
-                  }}
-                />
-              </div>
-              <ToggleField
-                checked={options.find(option => option.name === name)?.enabled ? true : false}
-                onChange={(value) => handleToggle(name, value)}
-              />
-            </div>
+            <ToggleField
+              key={name}
+              label={
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <span>{label}</span>
+                  <span
+                    style={{
+                      width: '12px',
+                      height: '12px',
+                      borderRadius: '50%',
+                      marginLeft: '10px',
+                      backgroundColor:
+                        launcherStatus?.installedLaunchers.includes(name) ? 'green' : 'red',
+                    }}
+                  />
+                </div>
+              }
+              checked={options.find(option => option.name === name)?.enabled ? true : false}
+              onChange={(value) => handleToggle(name, value)}
+            />
           ))}
           
           {/* Helpful Notes */}
