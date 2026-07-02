@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import tempfile
 from datetime import datetime
 import subprocess
 import time
@@ -80,6 +81,54 @@ def get_shortcuts_path():
 
 def get_installed_apps_path():
     return f"{DECKY_USER_HOME}/.config/systemd/user/installedapps.json"
+
+
+def get_removal_counters_path():
+    return f"{DECKY_USER_HOME}/.config/systemd/user/nsl_removal_counters.json"
+
+
+# AUDIT M25 (ported): a game must be missing for this many consecutive
+# countable scan cycles before it is treated as removed.
+REMOVAL_MISS_THRESHOLD = 3
+
+
+def load_removal_counters():
+    # AUDIT M25 (ported): a corrupt or missing counter file must never count
+    # as "threshold reached" - reset to 0 and recount. A missed removal is
+    # harmless, a wrong removal is not.
+    try:
+        with open(get_removal_counters_path(), "r") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("Expected dictionary.")
+        return {
+            launcher: {app: int(count) for app, count in apps.items()}
+            for launcher, apps in data.items() if isinstance(apps, dict)
+        }
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        decky_plugin.logger.warning(f"Removal counter file unreadable ({e}); resetting all counters.")
+        return {}
+
+
+def save_removal_counters(counters):
+    # Same atomic write pattern as the K1 fix (tempfile + fsync + os.replace).
+    counters_path = get_removal_counters_path()
+    os.makedirs(os.path.dirname(counters_path), exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix='.nsl_removal_counters.', dir=os.path.dirname(counters_path))
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(counters, f, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, counters_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 _current_scan = {}
@@ -249,30 +298,49 @@ def finalize_game_tracking():
     installed_apps_path = get_installed_apps_path()
 
     removed_apps = {}
+    counters = load_removal_counters()
+    new_counters = {}
 
-    # Mark missing launchers as uninstalled
     for launcher in list(_master_list.keys()):
-        if launcher not in _current_scan:
-            removed_apps[launcher] = list(_master_list[launcher].keys())
-            del _master_list[launcher]  # Remove the launcher entirely
-        else:
-            # Check missing games within the launcher
-            for appname in list(_master_list[launcher].keys()):
-                if appname not in _current_scan[launcher]:
-                    was_installed_before = _previous_master_list.get(launcher, {}).get(appname, {}).get("still_installed", True)
-                    if was_installed_before:
-                        if launcher not in removed_apps:
-                            removed_apps[launcher] = []
-                        removed_apps[launcher].append(appname)
+        # AUDIT M25 (ported): a launcher without any scan data this cycle
+        # means its data source was unavailable (or the scan came up empty),
+        # not that every one of its games was uninstalled at once. Since all
+        # games are tracked under the single "Launcher" key, this branch is
+        # also what keeps an empty scan from removing everything at once.
+        # Do not count this cycle; carry existing counters over unchanged.
+        if launcher not in _current_scan or not _current_scan[launcher]:
+            if launcher in counters:
+                new_counters[launcher] = counters[launcher]
+            decky_plugin.logger.info(f"Launcher '{launcher}' yielded no scan data this cycle; skipping removal detection for it.")
+            continue
 
-                    _master_list[launcher][appname]["still_installed"] = False
-                    _master_list[launcher][appname]["last_seen"] = now
+        # Check missing games within the launcher
+        for appname in list(_master_list[launcher].keys()):
+            if appname in _current_scan[launcher]:
+                continue  # still installed; any previous miss counter resets
+            if not _master_list[launcher][appname].get("still_installed", True):
+                continue  # already handled as removed in an earlier cycle
+            miss_count = counters.get(launcher, {}).get(appname, 0) + 1
+            if miss_count >= REMOVAL_MISS_THRESHOLD:
+                was_installed_before = _previous_master_list.get(launcher, {}).get(appname, {}).get("still_installed", True)
+                if was_installed_before:
+                    if launcher not in removed_apps:
+                        removed_apps[launcher] = []
+                    removed_apps[launcher].append(appname)
+
+                _master_list[launcher][appname]["still_installed"] = False
+                _master_list[launcher][appname]["last_seen"] = now
+            else:
+                new_counters.setdefault(launcher, {})[appname] = miss_count
+                decky_plugin.logger.info(f"'{appname}' ({launcher}) missing for {miss_count}/{REMOVAL_MISS_THRESHOLD} cycles; not removing yet.")
 
     # Merge updated scan data
     for launcher, games in _current_scan.items():
         if launcher not in _master_list:
             _master_list[launcher] = {}
         _master_list[launcher].update(games)
+
+    save_removal_counters(new_counters)
 
     # Helper to strip volatile fields for comparison
     def cleaned(data):
