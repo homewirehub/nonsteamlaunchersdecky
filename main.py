@@ -63,7 +63,7 @@ class Plugin:
             url = f"https://api.github.com/repos/{owner}/{repo}/commits"
 
             try:
-                response = requests.get(url)
+                response = requests.get(url, timeout=(5, 30))
                 if response.status_code == 200:
                     commits = response.json()
                     return categorize_commits(commits)
@@ -146,7 +146,7 @@ class Plugin:
             github_url = "https://raw.githubusercontent.com/moraroy/NonSteamLaunchersDecky/refs/heads/main/package.json"
             loop = asyncio.get_event_loop()
             try:
-                response = await loop.run_in_executor(None, requests.get, github_url)
+                response = await loop.run_in_executor(None, lambda: requests.get(github_url, timeout=(5, 30)))
                 response.raise_for_status()
                 decky_plugin.logger.info("Successfully fetched GitHub version")
                 return response.json()  # This will return the parsed JSON directly
