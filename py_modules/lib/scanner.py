@@ -181,6 +181,7 @@ def scan():
     global decky_shortcuts, env_vars, _shortcuts_vdf_error
     decky_shortcuts = {}
     _shortcuts_vdf_error = False
+    removed_apps = {}
 
     # Refresh env_vars once at the start
     env_vars = refresh_env_vars()
