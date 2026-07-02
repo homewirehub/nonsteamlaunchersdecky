@@ -54,6 +54,16 @@ proxy_url = 'https://nonsteamlaunchers.onrender.com/api'
 decky_shortcuts = {}
 
 
+class ShortcutsVdfError(Exception):
+    """An existing shortcuts.vdf could not be read or parsed."""
+
+
+# AUDIT K1 (ported): set while scanning when shortcuts.vdf turns out to be
+# unreadable; scan() checks it and aborts before tracking/removal detection.
+# Scanner modules catch broad exceptions, so the raise alone is not enough.
+_shortcuts_vdf_error = False
+
+
 launcher_icons = {
     "Epic Games": "5255885",
     "Amazon Games": "5255884",
@@ -168,8 +178,9 @@ def scan():
     clear_current_scan()
 
 
-    global decky_shortcuts, env_vars
+    global decky_shortcuts, env_vars, _shortcuts_vdf_error
     decky_shortcuts = {}
+    _shortcuts_vdf_error = False
 
     # Refresh env_vars once at the start
     env_vars = refresh_env_vars()
@@ -215,6 +226,13 @@ def scan():
                 except Exception as e:
                     decky_plugin.logger.error(f"Error in {scanner_func.__name__}: {e}")
 
+
+        # AUDIT K1 (ported): an unreadable shortcuts.vdf means this scan ran
+        # against unknown shortcut state - neither additions nor removal
+        # detection may be derived from it.
+        if _shortcuts_vdf_error:
+            decky_plugin.logger.error("Aborting scan: shortcuts.vdf could not be read or parsed.")
+            return {}, {}
 
         removed_apps = finalize_game_tracking()
 
@@ -314,44 +332,42 @@ def check_if_shortcut_exists(display_name, exe_path, start_dir, launch_options):
 
     # Check if the shortcuts file exists
     if os.path.exists(vdf_path):
+        # AUDIT K1 (ported): an existing shortcuts.vdf is never rewritten or
+        # re-initialized here - the old exec-bit heuristic wiped every
+        # Non-Steam shortcut as soon as the file lost its exec bit. If the
+        # file cannot be read or parsed, abort instead of working against
+        # unknown shortcut state.
+        global _shortcuts_vdf_error
+        try:
+            with open(vdf_path, 'rb') as file:
+                shortcuts = vdf.binary_loads(file.read())
+            shortcut_entries = list(shortcuts['shortcuts'].values())
+        except Exception as e:
+            _shortcuts_vdf_error = True
+            raise ShortcutsVdfError(f"Cannot read shortcuts.vdf at {vdf_path}: {e}") from e
 
-        # If the file is not executable, write the shortcuts dictionary and make it executable
-        if not os.access(vdf_path, os.X_OK):
-            decky_plugin.logger.info(f"VDF file is not executable, initializing: {vdf_path}")
-            with open(vdf_path, 'wb') as file:
-                vdf.binary_dumps({'shortcuts': {}}, file)
-            os.chmod(vdf_path, 0o755)
-        else:
-            # If the file exists, try to load it
-            try:
-                with open(vdf_path, 'rb') as file:
-                    shortcuts = vdf.binary_loads(file.read())
-
-                for s in shortcuts['shortcuts'].values():
-                    stripped_exe_path = exe_path.strip('\"') if exe_path else exe_path
-                    stripped_start_dir = start_dir.strip('\"') if start_dir else start_dir
+        for s in shortcut_entries:
+            stripped_exe_path = exe_path.strip('\"') if exe_path else exe_path
+            stripped_start_dir = start_dir.strip('\"') if start_dir else start_dir
 
 
-                    # Non-Chrome shortcut check: We remove the launch options comparison for non-Chrome shortcuts
-                    if (s.get('appname') == display_name or s.get('AppName') == display_name) and \
-                       (s.get('exe') and s.get('exe').strip('\"') == stripped_exe_path or s.get('Exe') and s.get('Exe').strip('\"') == stripped_exe_path) and \
-                       s.get('StartDir') and s.get('StartDir').strip('\"') == stripped_start_dir:
+            # Non-Chrome shortcut check: We remove the launch options comparison for non-Chrome shortcuts
+            if (s.get('appname') == display_name or s.get('AppName') == display_name) and \
+               (s.get('exe') and s.get('exe').strip('\"') == stripped_exe_path or s.get('Exe') and s.get('Exe').strip('\"') == stripped_exe_path) and \
+               s.get('StartDir') and s.get('StartDir').strip('\"') == stripped_start_dir:
 
-                        # Check if the launch options are different (for non-Chrome, no comparison is done, so add a warning here)
-                        if s.get('LaunchOptions') != launch_options:
-                            decky_plugin.logger.warning(f"Launch options for {display_name} differ from the default. This could be due to the user manually modifying the launch options. Will skip creation")
+                # Check if the launch options are different (for non-Chrome, no comparison is done, so add a warning here)
+                if s.get('LaunchOptions') != launch_options:
+                    decky_plugin.logger.warning(f"Launch options for {display_name} differ from the default. This could be due to the user manually modifying the launch options. Will skip creation")
 
-                        decky_plugin.logger.info(f"Existing shortcut found for game {display_name}. Skipping creation.")
-                        return True
+                decky_plugin.logger.info(f"Existing shortcut found for game {display_name}. Skipping creation.")
+                return True
 
-                    if (s.get('appname') == display_name or s.get('AppName') == display_name) and \
-                       (s.get('exe') and s.get('exe').strip('\"') == '/app/bin/chrome') and \
-                       s.get('LaunchOptions') and launch_options in s.get('LaunchOptions'):
-                        decky_plugin.logger.info(f"Existing website shortcut found for {display_name}. Skipping creation.")
-                        return True
-
-            except Exception as e:
-                decky_plugin.logger.error(f"Error reading shortcuts file: {e}")
+            if (s.get('appname') == display_name or s.get('AppName') == display_name) and \
+               (s.get('exe') and s.get('exe').strip('\"') == '/app/bin/chrome') and \
+               s.get('LaunchOptions') and launch_options in s.get('LaunchOptions'):
+                decky_plugin.logger.info(f"Existing website shortcut found for {display_name}. Skipping creation.")
+                return True
     else:
         decky_plugin.logger.info(f"VDF file not found at: {vdf_path}")
 

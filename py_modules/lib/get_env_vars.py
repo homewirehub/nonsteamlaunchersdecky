@@ -1,9 +1,33 @@
 import os
 import platform
 import logging
+import tempfile
 import vdf
 import decky_plugin
 from decky_plugin import DECKY_USER_HOME
+
+
+def create_empty_shortcuts_vdf(shortcuts_path):
+    # AUDIT K1 (ported): only ever creates a missing shortcuts.vdf, atomically
+    # (tempfile + fsync + os.link). An existing file is never replaced - even
+    # one that appears between the caller's existence check and this write.
+    os.makedirs(os.path.dirname(shortcuts_path), exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix='.shortcuts.vdf.', dir=os.path.dirname(shortcuts_path))
+    try:
+        with os.fdopen(fd, 'wb') as file:
+            file.write(vdf.binary_dumps({"shortcuts": {}}))
+            file.flush()
+            os.fsync(file.fileno())
+        os.chmod(temp_path, 0o755)
+        os.link(temp_path, shortcuts_path)
+        decky_plugin.logger.info(f"Created missing shortcuts.vdf at {shortcuts_path}")
+    except FileExistsError:
+        decky_plugin.logger.info(f"shortcuts.vdf appeared at {shortcuts_path} during creation; leaving it untouched.")
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 env_vars_path = f"{DECKY_USER_HOME}/.config/systemd/user/env_vars"
 env_vars = {}
@@ -149,11 +173,7 @@ def refresh_env_vars():
                     # Handle shortcuts.vdf
                     shortcuts_path = os.path.join(USERS_DATA_DIR, current_user, "config", "shortcuts.vdf")
                     if not os.path.exists(shortcuts_path):
-                        os.makedirs(os.path.dirname(shortcuts_path), exist_ok=True)
-                        with open(shortcuts_path, "wb") as file:
-                            file.write(vdf.binary_dumps({"shortcuts": {}}))
-                        os.chmod(shortcuts_path, 0o755)
-                        decky_plugin.logger.info(f"Created missing shortcuts.vdf at {shortcuts_path}")
+                        create_empty_shortcuts_vdf(shortcuts_path)
 
                     # Normalize the path, capitalize drive letter, preserve folder names
                     if shortcuts_path and os.path.exists(shortcuts_path):
