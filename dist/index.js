@@ -711,7 +711,7 @@
                   note: false,
                   up: false,
               });
-              if (result) {
+              if (result.success && result.result) {
                   setProgress({ percent: endPercent, status: `${operation} Selection ${index + 1} of ${total}`, description: `${launcher}` });
                   notify.toast(`Launcher ${operation}ed`, `${launcherLabel} was ${operation.toLowerCase()}ed successfully!`);
               }
