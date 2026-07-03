@@ -914,9 +914,6 @@ class Plugin:
         script_path = os.path.join(DECKY_PLUGIN_DIR, 'NonSteamLaunchers.sh')
         os.chmod(script_path, 0o755)
 
-        # Temporarily disable access control for the X server
-        run(['xhost', '+'])
-
         # Construct the command to run
         command_suffix = ' '.join(
             ([f'"{operation if operation == "Uninstall" else ""} {selected_option_nice}"'] if selected_option_nice != '' else []) +
@@ -944,28 +941,47 @@ class Plugin:
             'LD_LIBRARY_PATH': '/usr/lib:/lib:/usr/lib32:/lib32'
         })
 
-        # Check if xterm exists before attempting to use it
-        try:
-            xterm_check = subprocess.run(['which', 'xterm'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if xterm_check.returncode == 0:
-                # xterm is found, use it only if necessary
-                decky_plugin.logger.info("xterm found. Running command in xterm.")
-                process = Popen(f"xterm -e {command}", shell=True, env=env)
-            else:
-                # xterm not found, run command directly
-                decky_plugin.logger.info("xterm not found. Running command directly.")
-                process = Popen(command, shell=True, env=env)
-        except Exception as e:
-            decky_plugin.logger.error(f"Error checking xterm: {e}")
-            # Fallback to running the command directly if there was an error checking xterm
-            decky_plugin.logger.info("Error checking xterm, falling back to subprocess.")
-            process = Popen(command, shell=True, env=env)
+        # The whole blocking sequence (xhost, Popen, process.wait) runs in
+        # a worker thread so the event loop - and with it /launcher_status
+        # and the /logUpdates live stream - stays responsive for the whole
+        # install.
+        def run_installer_script():
+            # Temporarily disable access control for the X server
+            run(['xhost', '+'])
+            try:
+                # Check if xterm exists before attempting to use it
+                try:
+                    xterm_check = subprocess.run(['which', 'xterm'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if xterm_check.returncode == 0:
+                        # xterm is found, use it only if necessary
+                        decky_plugin.logger.info("xterm found. Running command in xterm.")
+                        process = Popen(f"xterm -e {command}", shell=True, env=env)
+                    else:
+                        # xterm not found, run command directly
+                        decky_plugin.logger.info("xterm not found. Running command directly.")
+                        process = Popen(command, shell=True, env=env)
+                except Exception as e:
+                    decky_plugin.logger.error(f"Error checking xterm: {e}")
+                    # Fallback to running the command directly if there was an error checking xterm
+                    decky_plugin.logger.info("Error checking xterm, falling back to subprocess.")
+                    process = Popen(command, shell=True, env=env)
 
-        # Wait for the script to complete and get the exit code
-        exit_code = process.wait()
+                # Wait for the script to complete and get the exit code
+                return process.wait()
+            finally:
+                # Re-enable access control for the X server, even if the
+                # script could not be started
+                run(['xhost', '-'])
 
-        # Re-enable access control for the X server
-        run(['xhost', '-'])
+        # The installer script rewrites state a concurrent scan would read
+        # mid-flight (env_vars, the launcher prefixes; Start Fresh deletes
+        # both), and games transiently absent during an uninstall could
+        # trip the 3-strikes removal logic - so installs take the same
+        # lock as scans, which also keeps two installer runs from
+        # overlapping. Waiters suspend on the loop; /launcher_status is
+        # not behind this lock and keeps answering.
+        async with self.scan_lock:
+            exit_code = await asyncio.get_event_loop().run_in_executor(None, run_installer_script)
 
         # Log the exit code for debugging
         decky_plugin.logger.info(f"Command exit code: {exit_code}")
