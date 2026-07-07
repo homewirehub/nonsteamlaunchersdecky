@@ -239,6 +239,22 @@
       return true;
   }
   // End of Shortcut Creation Code
+  // Shortcut self-heal: the backend detected that an existing shortcut points
+  // at an executable a launcher update renamed. Re-point exe and start dir on
+  // the existing appid; name, launch options, compat tool choice, artwork and
+  // collections stay untouched.
+  async function updateShortcut(game) {
+      const { appid, appname, exe, StartDir } = game;
+      if (!appid || !exe || !StartDir) {
+          console.log(`updateShortcut: incomplete update for ${appname}, ignoring`);
+          return false;
+      }
+      console.log(`Updating shortcut ${appname} (${appid}): exe=${exe}, StartDir=${StartDir}`);
+      SteamClient.Apps.SetShortcutExe(appid, exe);
+      SteamClient.Apps.SetShortcutStartDir(appid, StartDir);
+      notify.toast(appname, "has been updated to the new game version!");
+      return true;
+  }
 
   const installSite = async (sites, serverAPI, { setProgress }, total, browser) => {
       console.log('installSite called');
@@ -467,6 +483,14 @@
       };
   };
 
+  async function handleGameMessage(message) {
+      if (message.Update) {
+          await updateShortcut(message);
+      }
+      else {
+          await createShortcut(message);
+      }
+  }
   async function setupWebSocket(url, onMessage, onComplete) {
       const ws = new WebSocket(url);
       ws.onopen = () => {
@@ -534,7 +558,7 @@
       console.log('Starting NSL Scan');
       return new Promise((resolve) => {
           setupWebSocket('ws://localhost:8675/scan', async (message) => {
-              await createShortcut(message);
+              await handleGameMessage(message);
           }, (removedGames) => {
               if (removedGames) {
                   cleanUpEmptyCollections(removedGames);
@@ -548,7 +572,7 @@
   async function autoscan() {
       console.log('Starting NSL Autoscan');
       await setupWebSocket('ws://localhost:8675/autoscan', async (message) => {
-          await createShortcut(message);
+          await handleGameMessage(message);
       }, (removedGames) => {
           if (removedGames) {
               cleanUpEmptyCollections(removedGames);
