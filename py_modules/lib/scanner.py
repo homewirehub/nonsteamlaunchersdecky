@@ -64,6 +64,13 @@ class ShortcutsVdfError(Exception):
 _shortcuts_vdf_error = False
 
 
+# Shortcut self-heal: (appname, exe) updates already sent to the frontend in
+# this plugin session. Steam flushes shortcuts.vdf lazily, so without this a
+# scan cycle would re-send the same update against the stale on-disk file
+# until the flush happens.
+_emitted_shortcut_updates = set()
+
+
 # Explicit (connect, read) timeouts for every outbound request - a stalled
 # connection must never hang a scan cycle indefinitely.
 HTTP_TIMEOUT = (5, 30)
@@ -381,6 +388,62 @@ def check_if_shortcut_exists(display_name, exe_path, start_dir, launch_options):
 
     return False
 
+
+
+def find_stale_shortcut_for_update(display_name, new_exe, new_start_dir):
+    """Find the shortcut this scanner created earlier whose executable was
+    replaced by a launcher update (versioned filenames, e.g. itch): same
+    AppName, the recorded exe no longer exists on disk, the newly scanned
+    exe does, and both live under the same compatdata prefix - a same-named
+    shortcut the user created elsewhere is never touched. Read-only.
+    Returns {'appid': <unsigned int32>, 'old_exe': str} or None.
+    """
+    new_exe_path = new_exe.strip('"') if new_exe else ""
+    if not new_exe_path or not os.path.isfile(new_exe_path):
+        return None
+
+    prefix_match = re.match(r'(.*/steamapps/compatdata/[^/]+/)', new_exe_path)
+    if not prefix_match:
+        return None
+    prefix_root = prefix_match.group(1)
+
+    vdf_path = f"{logged_in_home}/.steam/root/userdata/{steamid3}/config/shortcuts.vdf"
+    if not os.path.exists(vdf_path):
+        return None
+
+    # Same K1 semantics as check_if_shortcut_exists: an unreadable
+    # shortcuts.vdf means unknown shortcut state - abort the scan instead
+    # of falling through to a duplicate creation.
+    global _shortcuts_vdf_error
+    try:
+        with open(vdf_path, 'rb') as file:
+            shortcuts = vdf.binary_loads(file.read())
+        shortcut_entries = list(shortcuts['shortcuts'].values())
+    except Exception as e:
+        _shortcuts_vdf_error = True
+        raise ShortcutsVdfError(f"Cannot read shortcuts.vdf at {vdf_path}: {e}") from e
+
+    for s in shortcut_entries:
+        if s.get('appname') != display_name and s.get('AppName') != display_name:
+            continue
+        old_exe = (s.get('exe') or s.get('Exe') or '').strip('"')
+        if not old_exe or old_exe == new_exe_path:
+            continue
+        if not old_exe.startswith(prefix_root):
+            continue
+        if os.path.isfile(old_exe):
+            # Still points at a real file; possibly a shortcut the user
+            # keeps on purpose. Not ours to redirect.
+            continue
+        appid = s.get('appid') or s.get('AppID')
+        if not isinstance(appid, int):
+            decky_plugin.logger.warning(f"Stale shortcut '{display_name}' has no usable appid; skipping self-heal.")
+            continue
+        # vdf stores the appid as a signed int32; SteamClient expects the
+        # unsigned value.
+        return {'appid': appid & 0xFFFFFFFF, 'old_exe': old_exe}
+
+    return None
 
 
 # Add or update the proton compatibility settings
@@ -760,6 +823,39 @@ def create_new_entry(exe, appname, launchoptions, startingdir, launcher):
             umu = True
             if check_if_shortcut_exists(appname, exe, startingdir, launchoptions):
                 return
+
+        # Shortcut self-heal: a launcher updated the game in place and the
+        # versioned executable was renamed - the existing shortcut points at
+        # a file that is gone while the scan found the new one. Re-point the
+        # existing shortcut instead of creating a duplicate; the appid (and
+        # with it artwork, playtime, collections and the user's compat tool
+        # choice) survives. Applied by the frontend via SetShortcutExe /
+        # SetShortcutStartDir; LaunchOptions are deliberately left alone
+        # (the user may have customized them, see the warning in
+        # check_if_shortcut_exists).
+        stale = find_stale_shortcut_for_update(appname, exe, startingdir)
+        if stale:
+            update_key = (appname, exe)
+            if update_key in _emitted_shortcut_updates:
+                decky_plugin.logger.info(f"Shortcut update for {appname} already sent this session; waiting for Steam to flush shortcuts.vdf.")
+                return
+            _emitted_shortcut_updates.add(update_key)
+            decky_shortcuts[appname] = {
+                'appname': appname,
+                'appid': stale['appid'],
+                'Update': True,
+                'exe': exe,
+                'StartDir': startingdir,
+                'LaunchOptions': launchoptions,
+                # Not re-applied to the shortcut; desktopC uses it to
+                # regenerate the .desktop entry with the new executable.
+                'CompatTool': None if umu else add_compat_tool(launchoptions),
+                'Launcher': launcher,
+            }
+            decky_plugin.logger.info(
+                f"Shortcut for {appname} points at missing {stale['old_exe']}; updating in place to {exe} (appid {stale['appid']})."
+            )
+            return
 
     formatted_exe = f'"{exe}"' if platform.system() == "Windows" else exe
     formatted_start_dir = f'"{startingdir}"' if platform.system() == "Windows" else startingdir
