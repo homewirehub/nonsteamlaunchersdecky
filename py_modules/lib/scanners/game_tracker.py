@@ -340,7 +340,10 @@ def finalize_game_tracking():
             _master_list[launcher] = {}
         _master_list[launcher].update(games)
 
-    save_removal_counters(new_counters)
+    # Only write when a counter actually changed - with autoscan enabled
+    # this would otherwise be one flash write every scan cycle.
+    if new_counters != counters:
+        save_removal_counters(new_counters)
 
     # Helper to strip volatile fields for comparison
     def cleaned(data):

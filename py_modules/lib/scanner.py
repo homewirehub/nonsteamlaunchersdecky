@@ -70,6 +70,12 @@ _shortcuts_vdf_error = False
 # until the flush happens.
 _emitted_shortcut_updates = set()
 
+# Same lazy-flush problem for creations: a shortcut created in an earlier
+# cycle may not be in shortcuts.vdf yet, so check_if_shortcut_exists cannot
+# see it and autoscan would stack a duplicate every cycle until Steam
+# flushes.
+_emitted_shortcut_creations = set()
+
 
 # Explicit (connect, read) timeouts for every outbound request - a stalled
 # connection must never hang a scan cycle indefinitely.
@@ -857,6 +863,11 @@ def create_new_entry(exe, appname, launchoptions, startingdir, launcher):
             )
             return
 
+    creation_key = (appname, exe)
+    if creation_key in _emitted_shortcut_creations:
+        decky_plugin.logger.info(f"Shortcut for {appname} already sent this session; waiting for Steam to flush shortcuts.vdf.")
+        return
+
     formatted_exe = f'"{exe}"' if platform.system() == "Windows" else exe
     formatted_start_dir = f'"{startingdir}"' if platform.system() == "Windows" else startingdir
     formatted_launch_options = launchoptions
@@ -961,6 +972,7 @@ def create_new_entry(exe, appname, launchoptions, startingdir, launcher):
         'Launcher': launcher,
     }
 
+    _emitted_shortcut_creations.add(creation_key)
     decky_shortcuts[appname] = decky_entry
     decky_plugin.logger.info(f"Added new entry for {appname} to shortcuts.")
 

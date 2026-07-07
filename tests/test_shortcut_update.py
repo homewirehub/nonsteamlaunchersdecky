@@ -26,6 +26,13 @@ frontend wiring (source-level)
      /scan and /autoscan.
  13. createShortcut.tsx exports updateShortcut which sets exe and start
      dir but never touches launch options, compat tool or artwork.
+
+flush-guards for autoscan (source-level)
+ 14. Creation guard: _emitted_shortcut_creations exists at module level,
+     is consulted in create_new_entry and filled on emission - Steam
+     flushes shortcuts.vdf lazily, so without it autoscan would stack a
+     duplicate of a freshly created shortcut every cycle until the flush.
+ 15. Removal counters are only written when they actually changed.
 """
 
 import ast
@@ -234,6 +241,33 @@ check("13. updateShortcut sets exe+startdir, leaves the rest alone",
       and "SpecifyCompatTool" not in body
       and "SetCustomArtworkForApp" not in body
       and "AddShortcut" not in body)
+
+
+# --- flush-guards for autoscan (source-level) -------------------------------
+
+module_has_creation_guard = any(
+    isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "_emitted_shortcut_creations" for t in n.targets)
+    for n in scanner_tree.body
+)
+check("14. creation guard exists, consulted and filled in create_new_entry",
+      module_has_creation_guard
+      and "creation_key in _emitted_shortcut_creations" in cne_src
+      and "_emitted_shortcut_creations.add(creation_key)" in cne_src)
+
+with open(os.path.join(REPO, "py_modules", "lib", "scanners", "game_tracker.py")) as f:
+    gt_src = f.read()
+gt_tree = ast.parse(gt_src)
+finalize = next(n for n in gt_tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "finalize_game_tracking")
+save_calls = [n for n in ast.walk(finalize) if isinstance(n, ast.Call)
+              and isinstance(n.func, ast.Name) and n.func.id == "save_removal_counters"]
+guarded = [n for n in ast.walk(finalize) if isinstance(n, ast.If)
+           and isinstance(n.test, ast.Compare)
+           and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                   and c.func.id == "save_removal_counters" for b in n.body for c in ast.walk(b))]
+check("15. counters only written on change",
+      len(save_calls) == 1 and len(guarded) == 1)
 
 
 print()
