@@ -212,7 +212,7 @@ class Plugin:
             await ws.prepare(request)
 
             loop = asyncio.get_event_loop()
-            debounce_interval = 30
+            debounce_interval = 300
             last_scan_time = 0
             processed_games = set()
 
