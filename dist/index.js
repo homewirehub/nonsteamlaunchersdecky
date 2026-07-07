@@ -415,6 +415,7 @@
           customSites: "",
           playtimeEnabled: true,
           thememusicEnabled: true,
+          removeShortcutOnUninstall: false,
       });
       // Load saved settings on mount
       React.useEffect(() => {
@@ -423,7 +424,9 @@
                   key: 'settings',
                   default: settings
               })).result;
-              setSettings(savedSettings);
+              // Merge over the defaults so settings saved by an older version
+              // (without the newer keys) don't leave fields undefined.
+              setSettings((prev) => ({ ...prev, ...savedSettings }));
           };
           getData();
       }, [serverApi]);
@@ -451,12 +454,16 @@
       function setThemeMusicEnabled(value) {
           updateSettings('thememusicEnabled', value);
       }
+      function setRemoveShortcutOnUninstall(value) {
+          updateSettings('removeShortcutOnUninstall', value);
+      }
       return {
           settings,
           setAutoScan,
           setCustomSites,
           setPlaytimeEnabled,
           setThemeMusicEnabled,
+          setRemoveShortcutOnUninstall,
       };
   };
 
@@ -630,7 +637,7 @@
   const LauncherInstallModal = ({ closeModal, launcherOptions, serverAPI }) => {
       const { launcherStatus, error, loading } = useLauncherStatus(); // Use the hook to get launcher status
       const [progress, setProgress] = React.useState({ percent: 0, status: '', description: '' });
-      const { settings, setAutoScan } = useSettings(serverAPI);
+      const { settings, setAutoScan, setRemoveShortcutOnUninstall } = useSettings(serverAPI);
       const [options, setOptions] = React.useState(launcherOptions);
       const [separateAppIds, setSeparateAppIds] = React.useState(false);
       const [operation, setOperation] = React.useState("");
@@ -714,6 +721,9 @@
               if (result.success && result.result) {
                   setProgress({ percent: endPercent, status: `${operation} Selection ${index + 1} of ${total}`, description: `${launcher}` });
                   notify.toast(`Launcher ${operation}ed`, `${launcherLabel} was ${operation.toLowerCase()}ed successfully!`);
+                  if (operation === "Uninstall" && settings.removeShortcutOnUninstall) {
+                      await removeSteamShortcut(launcher, launcherLabel);
+                  }
               }
               else {
                   setProgress({ percent: endPercent, status: `${operation} selection ${index + 1} of ${total} failed`, description: `${operation} ${launcher} failed. See logs.` });
@@ -724,6 +734,29 @@
               setProgress({ percent: endPercent, status: `Installing selection ${index + 1} of ${total} failed`, description: `Installing ${launcher} failed. See logs.` });
               notify.toast("Install Failed", `${launcherLabel} was not installed.`);
               console.error('Error calling _main method on server-side plugin:', error);
+          }
+      };
+      const removeSteamShortcut = async (launcher, launcherLabel) => {
+          // Resolve the NSL-created shortcut for this launcher. The backend
+          // only returns a hit on an exact name match whose Exe/StartDir points
+          // at an NSL-managed location, so a user's own same-named shortcut is
+          // never touched.
+          try {
+              const resp = await serverAPI.callPluginMethod("get_shortcut_appids", { names: [launcher] });
+              if (!resp.success || !resp.result) {
+                  console.error(`NSL: get_shortcut_appids failed for ${launcherLabel}`);
+                  return;
+              }
+              const entry = resp.result[launcher];
+              if (!entry) {
+                  console.log(`NSL: no NSL-managed Steam shortcut found for ${launcherLabel}; nothing to remove.`);
+                  return;
+              }
+              await SteamClient.Apps.RemoveShortcut(entry.appid);
+              notify.toast("Steam Shortcut Removed", `${entry.appname} was removed from your Steam library.`);
+          }
+          catch (error) {
+              console.error(`NSL: failed to remove Steam shortcut for ${launcherLabel}:`, error);
           }
       };
       const cancelOperation = () => {
@@ -808,7 +841,8 @@
                   window.SP_REACT.createElement("div", { style: { display: 'flex', alignItems: 'center' } },
                       window.SP_REACT.createElement(deckyFrontendLib.DialogButton, { style: { width: "fit-content" }, onClick: () => handleInstallClick("Install"), disabled: options.every(option => option.enabled === false) }, "Install"),
                       window.SP_REACT.createElement(deckyFrontendLib.DialogButton, { style: { width: "fit-content", marginLeft: "10px", marginRight: "10px" }, onClick: () => handleInstallClick("Uninstall"), disabled: options.every(option => option.enabled === false) }, "Uninstall")),
-                  window.SP_REACT.createElement(deckyFrontendLib.ToggleField, { label: "Separate Launcher Folders", checked: separateAppIds, onChange: handleSeparateAppIdsToggle }))))));
+                  window.SP_REACT.createElement(deckyFrontendLib.ToggleField, { label: "Separate Launcher Folders", checked: separateAppIds, onChange: handleSeparateAppIdsToggle })),
+              window.SP_REACT.createElement(deckyFrontendLib.ToggleField, { label: "Remove Steam shortcut on uninstall", description: "Also remove the launcher's NSL-created shortcut from your Steam library when uninstalling", checked: settings.removeShortcutOnUninstall, onChange: setRemoveShortcutOnUninstall })))));
   };
 
   const StreamingInstallModal = ({ closeModal, streamingOptions, serverAPI }) => {
