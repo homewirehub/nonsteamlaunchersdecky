@@ -6,6 +6,7 @@ export type Settings = {
   customSites: string;
   playtimeEnabled: boolean;
   thememusicEnabled: boolean;
+  removeShortcutOnUninstall: boolean;
 };
 
 export const useSettings = (serverApi: ServerAPI) => {
@@ -14,6 +15,7 @@ export const useSettings = (serverApi: ServerAPI) => {
     customSites: "",
     playtimeEnabled: true,
     thememusicEnabled: true,
+    removeShortcutOnUninstall: false,
   });
 
   // Load saved settings on mount
@@ -25,7 +27,9 @@ export const useSettings = (serverApi: ServerAPI) => {
           default: settings
         })
       ).result as Settings;
-      setSettings(savedSettings);
+      // Merge over the defaults so settings saved by an older version
+      // (without the newer keys) don't leave fields undefined.
+      setSettings((prev) => ({ ...prev, ...savedSettings }));
     };
     getData();
   }, [serverApi]);
@@ -62,11 +66,16 @@ export const useSettings = (serverApi: ServerAPI) => {
     updateSettings('thememusicEnabled', value);
   }
 
+  function setRemoveShortcutOnUninstall(value: Settings['removeShortcutOnUninstall']) {
+    updateSettings('removeShortcutOnUninstall', value);
+  }
+
   return {
     settings,
     setAutoScan,
     setCustomSites,
     setPlaytimeEnabled,
     setThemeMusicEnabled,
+    setRemoveShortcutOnUninstall,
   };
 };
