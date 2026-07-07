@@ -45,6 +45,18 @@ def camel_to_title(s):
     # Convert the first character of each word to uppercase and join the words with spaces
     return ' '.join(word.capitalize() for word in words)
 
+def to_nice_name(selected_options):
+    """Map a frontend option name (camelCase) to the display name the
+    installer script and the Steam shortcuts use. Shared by install()
+    and get_shortcut_appids() so both always agree on the name."""
+    if selected_options in ['fortnite', 'xboxGamePass', 'geforceNow', 'amazonLuna', 'movieweb', 'netflix', 'hulu', 'disneyPlus', 'amazonPrimeVideo', 'youtube', 'twitch']:
+        # Streaming site or game service option
+        return camel_to_title(selected_options).replace('Geforce', 'GeForce').replace('Disney Plus', 'Disney+').replace('movieweb', 'movie-web')
+    elif selected_options != 'separateAppIds':
+        # Launcher option (excluding the Separate App IDs option)
+        return camel_to_title(selected_options).replace('Ea App', 'EA App').replace('Uplay', 'Ubisoft Connect').replace('Gog Galaxy', 'GOG Galaxy').replace('Battle Net', 'Battle.net').replace('Itch Io', 'itch.io').replace('Humble Games', 'Humble Games Collection').replace('Indie Gala', 'IndieGala').replace('Rockstar', 'Rockstar Games Launcher').replace('Hoyo Play', 'HoYoPlay').replace('Vk Play', 'VK Play').replace('Glyph', 'Glyph Launcher').replace('Ps Plus', 'Playstation Plus').replace('DMM', 'DMM Games').replace('Remote Play Whatever', 'RemotePlayWhatever').replace('Pok Mon Trading Card Game Live', 'Pokémon Trading Card Game Live').replace('Vfun Launcher', 'VFUN Launcher').replace('Nvidia Ge Forcenow', 'NVIDIA GeForce NOW')
+    return ""
+
 class Plugin:
     scan_lock = asyncio.Lock()
     update_cache = {}
@@ -897,13 +909,7 @@ class Plugin:
 
 
         # Convert the selected options mapping to a list of strings
-        selected_option_nice = ""
-        if selected_options in ['fortnite', 'xboxGamePass', 'geforceNow', 'amazonLuna', 'movieweb', 'netflix', 'hulu', 'disneyPlus', 'amazonPrimeVideo', 'youtube', 'twitch']:
-            # Streaming site or game service option
-            selected_option_nice = camel_to_title(selected_options).replace('Geforce', 'GeForce').replace('Disney Plus', 'Disney+').replace('movieweb', 'movie-web')
-        elif selected_options != 'separateAppIds':
-            # Launcher option (excluding the Separate App IDs option)
-            selected_option_nice = camel_to_title(selected_options).replace('Ea App', 'EA App').replace('Uplay', 'Ubisoft Connect').replace('Gog Galaxy', 'GOG Galaxy').replace('Battle Net', 'Battle.net').replace('Itch Io', 'itch.io').replace('Humble Games', 'Humble Games Collection').replace('Indie Gala', 'IndieGala').replace('Rockstar', 'Rockstar Games Launcher').replace('Hoyo Play', 'HoYoPlay').replace('Vk Play', 'VK Play').replace('Glyph', 'Glyph Launcher').replace('Ps Plus', 'Playstation Plus').replace('DMM', 'DMM Games').replace('Remote Play Whatever', 'RemotePlayWhatever').replace('Pok Mon Trading Card Game Live', 'Pokémon Trading Card Game Live').replace('Vfun Launcher', 'VFUN Launcher').replace('Nvidia Ge Forcenow', 'NVIDIA GeForce NOW')
+        selected_option_nice = to_nice_name(selected_options)
 
 
         # Log the selected_options_list
@@ -983,7 +989,44 @@ class Plugin:
         async with self.scan_lock:
             exit_code = await asyncio.get_event_loop().run_in_executor(None, run_installer_script)
 
+            if exit_code == 0 and operation == "Uninstall" and selected_option_nice:
+                # The launcher is gone for good - drop its tracking entry
+                # and miss counter, otherwise the absent-launcher skip
+                # branch carries them as stale state forever. Still under
+                # the scan lock, so no scan cycle sees the intermediate
+                # state.
+                from scanners.game_tracker import purge_tracking_for_launcher
+                try:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, purge_tracking_for_launcher, selected_option_nice)
+                except Exception as e:
+                    decky_plugin.logger.error(f"Tracking purge after uninstall failed: {e}")
+
         # Log the exit code for debugging
         decky_plugin.logger.info(f"Command exit code: {exit_code}")
 
         return exit_code == 0
+
+    async def get_shortcut_appids(self, names):
+        """Resolve NSL-managed Steam shortcuts for the given frontend
+        option names (camelCase, as passed to install()). Returns
+        {option_name: {"appid": <unsigned int>, "appname": <shortcut
+        name>}} with entries only for shortcuts that match the launcher
+        display name exactly AND point at an NSL-managed location. The
+        frontend removes them via SteamClient.Apps.RemoveShortcut."""
+        if isinstance(names, str):
+            names = [names]
+        decky_plugin.logger.info(f"get_shortcut_appids called for: {names}")
+
+        from scanners.game_tracker import get_shortcut_entries_for_names
+        nice_by_input = {name: to_nice_name(name) for name in names}
+        nice_names = [nice for nice in nice_by_input.values() if nice]
+        entries = await asyncio.get_event_loop().run_in_executor(
+            None, get_shortcut_entries_for_names, nice_names)
+
+        result = {}
+        for input_name, nice in nice_by_input.items():
+            if nice in entries:
+                result[input_name] = entries[nice]
+        decky_plugin.logger.info(f"get_shortcut_appids result: {result}")
+        return result
