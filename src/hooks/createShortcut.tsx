@@ -159,3 +159,23 @@ export async function createShortcut(game: any) {
   return true;
 }
 // End of Shortcut Creation Code
+
+// Shortcut self-heal: the backend detected that an existing shortcut points
+// at an executable a launcher update renamed. Re-point exe and start dir on
+// the existing appid; name, launch options, compat tool choice, artwork and
+// collections stay untouched.
+export async function updateShortcut(game: any) {
+  const { appid, appname, exe, StartDir } = game;
+
+  if (!appid || !exe || !StartDir) {
+    console.log(`updateShortcut: incomplete update for ${appname}, ignoring`);
+    return false;
+  }
+
+  console.log(`Updating shortcut ${appname} (${appid}): exe=${exe}, StartDir=${StartDir}`);
+  SteamClient.Apps.SetShortcutExe(appid, exe);
+  SteamClient.Apps.SetShortcutStartDir(appid, StartDir);
+
+  notify.toast(appname, "has been updated to the new game version!");
+  return true;
+}

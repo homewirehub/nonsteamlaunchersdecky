@@ -1,5 +1,13 @@
-import { createShortcut } from "./createShortcut";
+import { createShortcut, updateShortcut } from "./createShortcut";
 import { notify } from "./notify";
+
+async function handleGameMessage(message: any) {
+    if (message.Update) {
+        await updateShortcut(message);
+    } else {
+        await createShortcut(message);
+    }
+}
 
 async function setupWebSocket(
     url: string,
@@ -80,7 +88,7 @@ export async function scan(onComplete: () => void) {
 
     return new Promise<void>((resolve) => {
         setupWebSocket('ws://localhost:8675/scan', async (message) => {
-            await createShortcut(message); 
+            await handleGameMessage(message);
         }, (removedGames) => {
             if (removedGames) {
                 cleanUpEmptyCollections(removedGames);
@@ -97,7 +105,7 @@ export async function autoscan() {
     console.log('Starting NSL Autoscan');
 
     await setupWebSocket('ws://localhost:8675/autoscan', async (message) => {
-        await createShortcut(message);
+        await handleGameMessage(message);
     }, (removedGames) => {
         if (removedGames) {
             cleanUpEmptyCollections(removedGames);
