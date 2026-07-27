@@ -34,7 +34,7 @@ export const RestoreGameSavesModal: VFC<RestoreGameSavesModalProps> = ({ closeMo
         up: false,
       });
 
-      if (result) {
+      if (result.success && result.result) {
         setProgress({ percent: 100, status: 'Game saves restored successfully!', description: '' });
         notify.toast("Game saves restored successfully!", "Your game saves have been restored.");
       } else {

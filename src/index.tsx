@@ -100,7 +100,7 @@ const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
         up: true,
       });
 
-      if (result) {
+      if (result.success && result.result) {
         setProgress({ percent: 100, status: 'Update complete', description: 'The plugin has been updated successfully.' });
         notify.toast("Update complete", "The plugin has been updated successfully.");
       } else {

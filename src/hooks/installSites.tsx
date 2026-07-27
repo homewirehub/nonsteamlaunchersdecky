@@ -30,7 +30,7 @@ export const installSite = async (
             nslgamesaves: false
         });
 
-        if (result) {
+        if (result.success && result.result) {
             console.log('Installation successful!');
             await createSiteShortcut(sites, browser, { setProgress }, total);
         } else {
