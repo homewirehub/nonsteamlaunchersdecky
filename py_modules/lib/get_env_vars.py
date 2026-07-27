@@ -7,6 +7,27 @@ import decky_plugin
 from decky_plugin import DECKY_USER_HOME
 
 
+def write_env_vars_atomically(env_vars_path, lines):
+    """Schreibt env_vars atomar (tempfile + fsync + os.replace), gleiches
+    Muster wie der K1-Fix. Ein halb geschriebenes env_vars kostet saemtliche
+    Launcher-Pfade, also darf die Zieldatei nie im truncate-Zustand liegen."""
+    dirname = os.path.dirname(env_vars_path) or "."
+    os.makedirs(dirname, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix='.env_vars.', dir=dirname)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.writelines(lines)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, env_vars_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+
+
 def create_empty_shortcuts_vdf(shortcuts_path):
     # AUDIT K1 (ported): only ever creates a missing shortcuts.vdf, atomically
     # (tempfile + fsync + os.link). An existing file is never replaced - even
@@ -244,13 +265,19 @@ def refresh_env_vars():
                 name, value = line.strip().split("=", 1)
                 env_vars[name] = value
 
-        with open(env_vars_path, "w") as f:
-            for line in lines:
-                if (
-                    "chromelaunchoptions" not in line
-                    and "websites_str" not in line
-                ):
-                    f.write(line)
+        # env_vars haelt saemtliche Launcher-Pfade. Bis 2026-07-27 wurde die
+        # Datei hier bei JEDEM refresh_env_vars() per truncate+write neu
+        # geschrieben - dreimal pro Scan, im Messlauf 195 Mal in zwei Stunden.
+        # Stirbt der Prozess in diesem Fenster (Deploy, Loader-Reload), bleibt
+        # eine abgeschnittene Datei zurueck und NSL kennt keinen Launcher mehr.
+        # Jetzt: nur schreiben, wenn wirklich Zeilen entfallen, und dann
+        # atomar wie beim K1-Fix.
+        kept_lines = [
+            line for line in lines
+            if "chromelaunchoptions" not in line and "websites_str" not in line
+        ]
+        if len(kept_lines) != len(lines):
+            write_env_vars_atomically(env_vars_path, kept_lines)
 
         env_vars["logged_in_home"] = DECKY_USER_HOME
 
