@@ -70,7 +70,7 @@ class Plugin:
 
         # Function to fetch GitHub commit history for patch notes
         async def fetch_patch_notes():
-            owner = "moraroy"  # Repository owner
+            owner = "homewirehub"  # Repository owner (fork we actually run)
             repo = "NonSteamLaunchersDecky"  # Repository name
             url = f"https://api.github.com/repos/{owner}/{repo}/commits"
 
@@ -155,7 +155,7 @@ class Plugin:
 
         # Function to fetch GitHub version info
         async def fetch_github_version():
-            github_url = "https://raw.githubusercontent.com/moraroy/NonSteamLaunchersDecky/refs/heads/main/package.json"
+            github_url = "https://raw.githubusercontent.com/homewirehub/NonSteamLaunchersDecky/refs/heads/main/package.json"
             loop = asyncio.get_event_loop()
             try:
                 response = await loop.run_in_executor(None, lambda: requests.get(github_url, timeout=(5, 30)))
