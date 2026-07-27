@@ -2146,24 +2146,71 @@
           gameId: null,
           launchTime: 0,
           inferredRunning: false,
+          watchersEnabled: false,
+          terminateScheduled: false,
+          overlaySequence: [],
           lastOverlayActive: null,
           lastOverlayChange: 0,
-          overlaySequence: [],
-          terminateScheduled: false,
-          watchersEnabled: false
+          graceTimer: null,
+          terminateTimer: null
       };
       const log = (label, data) => console.log(`%c[SteamDetect:${label}]`, "color:#00bcd4", data);
+      function resetState(gameId) {
+          if (state.graceTimer) {
+              clearTimeout(state.graceTimer);
+          }
+          if (state.terminateTimer) {
+              clearTimeout(state.terminateTimer);
+          }
+          state.gameId = gameId;
+          state.launchTime = Date.now();
+          state.inferredRunning = true;
+          state.watchersEnabled = false;
+          state.terminateScheduled = false;
+          state.overlaySequence = [];
+          state.lastOverlayActive = null;
+          state.lastOverlayChange = 0;
+      }
+      function scheduleTermination() {
+          if (!state.watchersEnabled)
+              return;
+          if (!state.gameId || state.terminateScheduled)
+              return;
+          state.terminateScheduled = true;
+          const gameToTerminate = state.gameId;
+          state.terminateTimer = setTimeout(() => {
+              // Ignore stale termination
+              if (state.gameId !== gameToTerminate)
+                  return;
+              log("TerminateApp", { gameId: gameToTerminate });
+              try {
+                  SteamClient.Apps.TerminateApp(gameToTerminate, false);
+              }
+              catch (e) {
+                  console.error("TerminateApp failed:", e);
+              }
+          }, 10000);
+      }
       try {
           SteamClient.Apps.RegisterForGameActionStart((_actionId, gameId, action) => {
               if (action !== "LaunchApp")
                   return;
-              state.gameId = gameId;
-              state.launchTime = Date.now();
-              state.inferredRunning = true;
-              state.terminateScheduled = false;
-              state.watchersEnabled = false;
-              log("Launch", { gameId, gracePeriod: "90s" });
-              setTimeout(() => {
+              const nonSteamGameIds = new Set(appStore.allApps
+                  .filter(app => app.app_type === 1073741824)
+                  .map(app => String(app.m_gameid)));
+              if (!nonSteamGameIds.has(String(gameId))) {
+                  log("IgnoredSteamGame", { gameId });
+                  return;
+              }
+              resetState(gameId);
+              log("Launch", {
+                  gameId,
+                  gracePeriod: "90 Seconds"
+              });
+              state.graceTimer = setTimeout(() => {
+                  // Ignore old launches
+                  if (state.gameId !== gameId)
+                      return;
                   state.watchersEnabled = true;
                   log("GracePeriodEnded", { gameId });
               }, GRACE_PERIOD_MS);
@@ -2177,7 +2224,8 @@
               if (!state.watchersEnabled)
                   return;
               log("Lifetime", evt);
-              if (evt.bRunning === false && state.inferredRunning) {
+              if (evt.bRunning === false &&
+                  state.inferredRunning) {
                   state.inferredRunning = false;
                   scheduleTermination();
                   log("SteamEnded", evt.unAppID);
@@ -2193,24 +2241,29 @@
               if (!state.watchersEnabled) {
                   return origSet.apply(this, arguments);
               }
+              // Ignore other apps
+              if (gameId !== state.gameId) {
+                  return origSet.apply(this, arguments);
+              }
               const now = Date.now();
-              const delta = now - state.lastOverlayChange;
-              log("SetOverlayState", arguments);
-              state.overlaySequence.push({ time: now, active: stateNum });
-              if (state.overlaySequence.length > 5)
+              log("Overlay", {
+                  gameId,
+                  stateNum
+              });
+              state.overlaySequence.push({
+                  time: now,
+                  active: stateNum
+              });
+              if (state.overlaySequence.length > 5) {
                   state.overlaySequence.shift();
+              }
+              // More flexible exit detection
               if (state.inferredRunning &&
-                  state.overlaySequence.length >= 2 &&
+                  stateNum === 3 &&
+                  now - state.launchTime > 30000 &&
                   !state.terminateScheduled) {
-                  const last = state.overlaySequence[state.overlaySequence.length - 1];
-                  const prev = state.overlaySequence[state.overlaySequence.length - 2];
-                  if (last.active === 3 &&
-                      prev.active === 0 &&
-                      now - state.launchTime > 15000 &&
-                      delta > 3000) {
-                      log("Inference", "Overlay indicates game likely exited → scheduling termination");
-                      scheduleTermination();
-                  }
+                  log("Inference", "Overlay indicates possible exit");
+                  scheduleTermination();
               }
               state.lastOverlayActive = stateNum;
               state.lastOverlayChange = now;
@@ -2220,23 +2273,7 @@
       catch (e) {
           console.error(e);
       }
-      function scheduleTermination() {
-          if (!state.watchersEnabled)
-              return;
-          if (!state.gameId || state.terminateScheduled)
-              return;
-          state.terminateScheduled = true;
-          setTimeout(() => {
-              log("TerminateApp", { gameId: state.gameId });
-              try {
-                  SteamClient.Apps.TerminateApp(state.gameId, false);
-              }
-              catch (e) {
-                  console.error("TerminateApp failed:", e);
-              }
-          }, 10000);
-      }
-      console.log("%c[SteamDetect] Initialized (90s hard grace after launch)", "color:#4caf50");
+      console.log("%c[SteamDetect] Initialized", "color:#4caf50");
   }
 
   const initialOptions = sitesList;
@@ -2383,7 +2420,7 @@
               window.SP_REACT.createElement(deckyFrontendLib.ButtonItem, { layout: "below", onClick: () => deckyFrontendLib.showModal(window.SP_REACT.createElement(RestoreGameSavesModal, { serverAPI: serverAPI })) }, "Restore Game Saves")),
           window.SP_REACT.createElement(deckyFrontendLib.PanelSection, { title: "Game Scanner" },
               window.SP_REACT.createElement(deckyFrontendLib.PanelSectionRow, { style: { fontSize: "12px", marginBottom: "10px" } }, "NSL can automatically detect, add or remove shortcuts for the games you install or uninstall in your non-steam launchers in real time, track playtime, auto download boot videos and play game theme music. Below, you can enable automatic scanning or trigger a manual scan. During a manual scan only, your game saves will be backed up here: /home/deck/NSLGameSaves."),
-              window.SP_REACT.createElement(deckyFrontendLib.PanelSectionRow, { style: { fontSize: "12px", marginBottom: "10px" } }, "The NSLGameScanner currently supports Epic Games Launcher, Ubisoft Connect, Gog Galaxy, The EA App, Battle.net, Amazon Games, Itch.io, Legacy Games, VK Play, HoYoPlay, Game Jolt Client, Minecraft Launcher, IndieGala Client, STOVE Client, Glyphlink and Humble Bundle as well as Chrome Bookmarks for Xbox Game Pass, GeForce Now, Amazon Luna & Boosteroid games, The Native Linux NVIDIA GeForce NOW App by favoriting the game \"\u2665\", Waydroid Applications and Native Xbox App Games on Windows OS."),
+              window.SP_REACT.createElement(deckyFrontendLib.PanelSectionRow, { style: { fontSize: "12px", marginBottom: "10px" } }, "The NSLGameScanner currently supports Epic Games Launcher, Ubisoft Connect, Gog Galaxy, The EA App, Battle.net, Amazon Games, Itch.io, Legacy Games, VK Play, HoYoPlay, Game Jolt Client, Minecraft Launcher, IndieGala Client, STOVE Client, Glyphlink and Humble Bundle as well as Chrome Bookmarks for Xbox Game Pass, GeForce Now, Amazon Luna, Boosteroid & WebRcade games, The Native Linux NVIDIA GeForce NOW App by favoriting the game \"\u2665\", Waydroid Applications and Native Xbox App Games on Windows OS."),
               window.SP_REACT.createElement(deckyFrontendLib.ToggleField, { label: "Auto Scan Games", checked: settings.autoscan, onChange: (value) => {
                       setAutoScan(value);
                       if (value === true) {
