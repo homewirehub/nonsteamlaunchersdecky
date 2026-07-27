@@ -146,11 +146,11 @@ for arg in "${args[@]}"; do
 
         echo "Updating from version $local_version to $github_version..."
 
-        # Die installierte Version wird erst angefasst, wenn das Update
-        # vollstaendig heruntergeladen, entpackt und geprueft ist. Vorher
-        # stand hier ein 'rm -rf "$LOCAL_DIR"' VOR dem curl, ohne einen
-        # einzigen Fehlercheck: ein fehlgeschlagener Download (offline, 404,
-        # umbenannter Branch) loeschte das Plugin unwiederbringlich.
+        # The installed version is only touched once the update has been
+        # fully downloaded, extracted and validated. This used to run
+        # 'rm -rf "$LOCAL_DIR"' BEFORE the curl, without a single error
+        # check: a failed download (offline, 404, renamed branch) deleted
+        # the plugin for good.
         staging_root=$(mktemp -d "${logged_in_home}/.nsl-plugin-update.XXXXXX") || {
             echo "Update aborted: could not create a staging directory. The installed plugin was left untouched."
             exit 1
@@ -167,7 +167,7 @@ for arg in "${args[@]}"; do
         curl -fL "$REPO_URL" -o "${staging_root}/plugin.zip" || abort_update "download failed"
         unzip -q -o "${staging_root}/plugin.zip" -d "$staging_root" || abort_update "archive could not be extracted"
 
-        # Das Zip enthaelt genau ein Wurzelverzeichnis (<repo>-<branch>).
+        # The zip contains exactly one root directory (<repo>-<branch>).
         new_root=$(find "$staging_root" -mindepth 1 -maxdepth 1 -type d | head -n1)
         [ -n "$new_root" ] || abort_update "no directory found inside the archive"
         [ -f "${new_root}/main.py" ] || abort_update "archive is missing main.py"
@@ -181,7 +181,7 @@ for arg in "${args[@]}"; do
         fi
 
         if ! mv "$new_root" "$LOCAL_DIR"; then
-            # Zuruecktauschen, damit die alte Installation weiterlaeuft.
+            # Swap back so the old installation keeps working.
             [ -n "$backup_dir" ] && mv "$backup_dir" "$LOCAL_DIR"
             abort_update "could not move the new plugin into place"
         fi

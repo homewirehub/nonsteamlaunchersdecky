@@ -8,9 +8,9 @@ from decky_plugin import DECKY_USER_HOME
 
 
 def write_env_vars_atomically(env_vars_path, lines):
-    """Schreibt env_vars atomar (tempfile + fsync + os.replace), gleiches
-    Muster wie der K1-Fix. Ein halb geschriebenes env_vars kostet saemtliche
-    Launcher-Pfade, also darf die Zieldatei nie im truncate-Zustand liegen."""
+    """Write env_vars atomically (tempfile + fsync + os.replace), the same
+    pattern as the K1 fix. A half-written env_vars costs every launcher
+    path, so the target file must never sit in a truncated state."""
     dirname = os.path.dirname(env_vars_path) or "."
     os.makedirs(dirname, exist_ok=True)
     fd, temp_path = tempfile.mkstemp(prefix='.env_vars.', dir=dirname)
@@ -265,13 +265,13 @@ def refresh_env_vars():
                 name, value = line.strip().split("=", 1)
                 env_vars[name] = value
 
-        # env_vars haelt saemtliche Launcher-Pfade. Bis 2026-07-27 wurde die
-        # Datei hier bei JEDEM refresh_env_vars() per truncate+write neu
-        # geschrieben - dreimal pro Scan, im Messlauf 195 Mal in zwei Stunden.
-        # Stirbt der Prozess in diesem Fenster (Deploy, Loader-Reload), bleibt
-        # eine abgeschnittene Datei zurueck und NSL kennt keinen Launcher mehr.
-        # Jetzt: nur schreiben, wenn wirklich Zeilen entfallen, und dann
-        # atomar wie beim K1-Fix.
+        # env_vars holds every launcher path. Until 2026-07-27 this file was
+        # rewritten by truncate+write on EVERY refresh_env_vars() call -
+        # three times per scan, 195 times in two hours in a measured run.
+        # If the process dies inside that window (deploy, loader reload), a
+        # truncated file is left behind and NSL knows no launcher at all.
+        # Now: only write when lines actually drop out, and then atomically
+        # like the K1 fix.
         kept_lines = [
             line for line in lines
             if "chromelaunchoptions" not in line and "websites_str" not in line
