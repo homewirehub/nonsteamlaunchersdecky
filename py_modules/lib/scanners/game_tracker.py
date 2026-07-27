@@ -17,6 +17,28 @@ def normalize_appname(name):
     return name.strip().lower()
 
 
+def desktop_match_key(name):
+    """Vergleichsschluessel fuer .desktop-Dateinamen.
+
+    Beim Anlegen werden in Dateinamen ungueltige Zeichen entfernt: aus einem
+    Spielnamen mit Doppelpunkt wird eine Datei ohne ihn, also aus
+    'Titel: Untertitel' die Datei 'Titel Untertitel.desktop'. Der Abgleich
+    lief bis 2026-07-27 ueber den Rohnamen mit blossem lower(), traf deshalb
+    nicht und liess die tote Verknuepfung liegen (im Log zweimal
+    'No .desktop file found').
+    Beidseitig alles ausser a-z0-9 zu entfernen macht den Vergleich
+    unabhaengig von der Sanitisierung.
+    """
+    return re.sub(r'[^a-z0-9]+', '', (name or "").lower())
+
+
+def desktop_name_matches(filename, wanted_key):
+    """True, wenn die .desktop-Datei zum gesuchten Spielnamen gehoert."""
+    if not filename.lower().endswith(".desktop"):
+        return False
+    return desktop_match_key(filename[:-len(".desktop")]) == wanted_key
+
+
 def get_steamid3(DECKY_USER_HOME, decky_plugin):
     paths = [
         f"{DECKY_USER_HOME}/.steam/root/config/loginusers.vdf",
@@ -259,12 +281,15 @@ def uninstall_removed_apps(removed_appnames, appid_map):
         return
 
     for game_name in removed_appnames:
-        base_game_name = game_name.split(' (')[0].strip().lower()
-        desktop_filename = f"{base_game_name}.desktop"
+        base_game_name = game_name.split(' (')[0].strip()
+        wanted_key = desktop_match_key(base_game_name)
+        if not wanted_key:
+            decky_plugin.logger.warning(f"No usable .desktop name for removed game: {game_name}")
+            continue
 
         found_path = None
         for f in desktop_files:
-            if f.lower() == desktop_filename:
+            if desktop_name_matches(f, wanted_key):
                 found_path = os.path.join(desktop_dir, f)
                 break
 
@@ -279,7 +304,7 @@ def uninstall_removed_apps(removed_appnames, appid_map):
 
         found_path = None
         for f in applications_files:
-            if f.lower() == desktop_filename:
+            if desktop_name_matches(f, wanted_key):
                 found_path = os.path.join(applications_dir, f)
                 break
 
