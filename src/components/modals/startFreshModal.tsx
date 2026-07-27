@@ -39,7 +39,7 @@ export const StartFreshModal: VFC<startFreshModalProps> = ({ closeModal, serverA
                 up: false,
             });
 
-            if (result) {
+            if (result.success && result.result) {
                 setProgress({ percent: 100, status: 'NSL has been wiped. Remember to delete your shortcuts!', description: '' });
                 notify.toast("...there was...NSL has been wiped.", "Remember to delete your shortcuts!");
             } else {

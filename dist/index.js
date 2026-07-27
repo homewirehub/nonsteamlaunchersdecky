@@ -267,7 +267,7 @@
               update_proton_ge: false,
               nslgamesaves: false
           });
-          if (result) {
+          if (result.success && result.result) {
               console.log('Installation successful!');
               await createSiteShortcut(sites, browser, { setProgress }, total);
           }
@@ -999,7 +999,7 @@
                   note: false,
                   up: false,
               });
-              if (result) {
+              if (result.success && result.result) {
                   setProgress({ percent: 100, status: 'NSL has been wiped. Remember to delete your shortcuts!', description: '' });
                   notify.toast("...there was...NSL has been wiped.", "Remember to delete your shortcuts!");
               }
@@ -1044,7 +1044,7 @@
                   note: false,
                   up: false,
               });
-              if (result) {
+              if (result.success && result.result) {
                   setProgress({ percent: 100, status: 'Proton GE updated successfully.', description: '' });
                   notify.toast("Proton GE Updated", "Proton GE has been updated successfully.");
                   setShowRestartModal(true);
@@ -1089,7 +1089,7 @@
                   note: false,
                   up: false,
               });
-              if (result) {
+              if (result.success && result.result) {
                   setProgress({ percent: 100, status: 'Game saves restored successfully!', description: '' });
                   notify.toast("Game saves restored successfully!", "Your game saves have been restored.");
               }
@@ -1685,7 +1685,7 @@
                   note: true,
                   up: false,
               });
-              if (result) {
+              if (result.success && result.result) {
                   setProgress({ percent: 100, status: 'Notes sent successfully!', description: '' });
                   notify.toast("Notes Sent", "Your notes have been successfully sent to the community.");
                   setShowRestartModal(true);
@@ -2333,7 +2333,7 @@
                   note: false,
                   up: true,
               });
-              if (result) {
+              if (result.success && result.result) {
                   setProgress({ percent: 100, status: 'Update complete', description: 'The plugin has been updated successfully.' });
                   notify.toast("Update complete", "The plugin has been updated successfully.");
               }

@@ -33,7 +33,7 @@ export const UpdateNotesModal: VFC<UpdateNotesModalProps> = ({ closeModal, serve
                 note: true,
                 up: false,
             });
-            if (result) {
+            if (result.success && result.result) {
                 setProgress({ percent: 100, status: 'Notes sent successfully!', description: '' });
                 notify.toast("Notes Sent", "Your notes have been successfully sent to the community.");
                 setShowRestartModal(true);

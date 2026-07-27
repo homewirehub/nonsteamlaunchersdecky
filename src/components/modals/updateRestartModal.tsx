@@ -25,7 +25,7 @@ export const UpdateRestartModal: VFC<UpdateRestartModalProps> = ({ closeModal, s
                 note: false,
                 up: false,
             });
-            if (result) {
+            if (result.success && result.result) {
                 setProgress({ percent: 100, status: 'Proton GE updated successfully.', description: '' });
                 notify.toast("Proton GE Updated", "Proton GE has been updated successfully.");
                 setShowRestartModal(true);
