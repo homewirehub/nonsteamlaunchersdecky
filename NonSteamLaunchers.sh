@@ -381,8 +381,12 @@ fi
 # Resolved dynamically (version-numbered install path)
 eaapp_path1=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/Program Files/Electronic Arts/EA Desktop/" "EALauncher.exe")
 eaapp_path2=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/TheEAappLauncher/pfx/drive_c/Program Files/Electronic Arts/EA Desktop/" "EALauncher.exe")
-itchio_path1=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/users/steamuser/AppData/Local/itch/" "itch.exe")
-itchio_path2=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/itchioLauncher/pfx/drive_c/users/steamuser/AppData/Local/itch/" "itch.exe")
+# itch: never point at app-<version>/itch.exe. That path pins one version, and
+# because the running process then lives inside the folder the updater has to
+# rename, the promotion of a downloaded update fails with a sharing violation.
+# itch-setup.exe sits at a fixed location and launches whatever is current.
+itchio_path1="${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/users/steamuser/AppData/Local/itch/itch-setup.exe"
+itchio_path2="${logged_in_home}/.local/share/Steam/steamapps/compatdata/itchioLauncher/pfx/drive_c/users/steamuser/AppData/Local/itch/itch-setup.exe"
 
 # Set the paths to the launcher executables
 epic_games_launcher_path1="${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/Program Files/Epic Games/Launcher/Portal/Binaries/Win64/EpicGamesLauncher.exe"
@@ -3295,8 +3299,9 @@ check_and_write() {
 # Resolved dynamically (version-numbered install path - must run after install_launcher)
 eaapp_path1=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/Program Files/Electronic Arts/EA Desktop/" "EALauncher.exe")
 eaapp_path2=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/TheEAappLauncher/pfx/drive_c/Program Files/Electronic Arts/EA Desktop/" "EALauncher.exe")
-itchio_path1=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/users/steamuser/AppData/Local/itch/" "itch.exe")
-itchio_path2=$(resolve_launcher_path "${logged_in_home}/.local/share/Steam/steamapps/compatdata/itchioLauncher/pfx/drive_c/users/steamuser/AppData/Local/itch/" "itch.exe")
+# itch: fixed stub path, see the comment at the first definition above.
+itchio_path1="${logged_in_home}/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c/users/steamuser/AppData/Local/itch/itch-setup.exe"
+itchio_path2="${logged_in_home}/.local/share/Steam/steamapps/compatdata/itchioLauncher/pfx/drive_c/users/steamuser/AppData/Local/itch/itch-setup.exe"
 
 # Env_vars Configuration Paths
 check_and_write "epic" "$epic_games_launcher_path1" "$epic_games_launcher_path2" "NonSteamLaunchers" "EpicGamesLauncher" "-opengl" "epic_games_launcher"
@@ -3305,7 +3310,7 @@ check_and_write "uplay" "$uplay_path1" "$uplay_path2" "NonSteamLaunchers" "Uplay
 check_and_write "battlenet" "$battlenet_path1" "$battlenet_path2" "NonSteamLaunchers" "Battle.netLauncher" "" "bnet_launcher"
 check_and_write "eaapp" "$eaapp_path1" "$eaapp_path2" "NonSteamLaunchers" "TheEAappLauncher" "" "ea_app_launcher"
 check_and_write "amazon" "$amazongames_path1" "$amazongames_path2" "NonSteamLaunchers" "AmazonGamesLauncher" "" "amazon_launcher"
-check_and_write "itchio" "$itchio_path1" "$itchio_path2" "NonSteamLaunchers" "itchioLauncher" "" "itchio_launcher"
+check_and_write "itchio" "$itchio_path1" "$itchio_path2" "NonSteamLaunchers" "itchioLauncher" "--prefer-launch --appname itch" "itchio_launcher"
 check_and_write "legacy" "$legacygames_path1" "$legacygames_path2" "NonSteamLaunchers" "LegacyGamesLauncher" "" "legacy_launcher"
 check_and_write "humble" "$humblegames_path1" "$humblegames_path2" "NonSteamLaunchers" "HumbleGamesLauncher" "" "humble_launcher"
 check_and_write "indie" "$indiegala_path1" "$indiegala_path2" "NonSteamLaunchers" "IndieGalaLauncher" "" "indie_launcher"
