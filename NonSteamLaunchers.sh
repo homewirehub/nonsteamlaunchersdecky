@@ -146,21 +146,50 @@ for arg in "${args[@]}"; do
 
         echo "Updating from version $local_version to $github_version..."
 
-        if $NSL_PLUGIN_EXISTS; then
-            echo "NSL Plugin detected. Deleting and updating..."
-            rm -rf "$LOCAL_DIR"
-        fi
+        # Die installierte Version wird erst angefasst, wenn das Update
+        # vollstaendig heruntergeladen, entpackt und geprueft ist. Vorher
+        # stand hier ein 'rm -rf "$LOCAL_DIR"' VOR dem curl, ohne einen
+        # einzigen Fehlercheck: ein fehlgeschlagener Download (offline, 404,
+        # umbenannter Branch) loeschte das Plugin unwiederbringlich.
+        staging_root=$(mktemp -d "${logged_in_home}/.nsl-plugin-update.XXXXXX") || {
+            echo "Update aborted: could not create a staging directory. The installed plugin was left untouched."
+            exit 1
+        }
 
-        echo "Creating base directory and setting permissions..."
-        mkdir -p "$LOCAL_DIR"
-        chmod -R u+rw "$LOCAL_DIR"
-        chown -R $logged_in_user:$logged_in_user "$LOCAL_DIR"
+        abort_update() {
+            echo "Update aborted: $1"
+            echo "The installed plugin was left untouched."
+            rm -rf "$staging_root"
+            exit 1
+        }
 
         echo "Downloading and extracting the repository..."
-        curl -L "$REPO_URL" -o /tmp/NonSteamLaunchersDecky.zip
-        unzip -o /tmp/NonSteamLaunchersDecky.zip -d /tmp/
-        cp -r /tmp/NonSteamLaunchersDecky-main/* "$LOCAL_DIR"
-        rm -rf /tmp/NonSteamLaunchersDecky*
+        curl -fL "$REPO_URL" -o "${staging_root}/plugin.zip" || abort_update "download failed"
+        unzip -q -o "${staging_root}/plugin.zip" -d "$staging_root" || abort_update "archive could not be extracted"
+
+        # Das Zip enthaelt genau ein Wurzelverzeichnis (<repo>-<branch>).
+        new_root=$(find "$staging_root" -mindepth 1 -maxdepth 1 -type d | head -n1)
+        [ -n "$new_root" ] || abort_update "no directory found inside the archive"
+        [ -f "${new_root}/main.py" ] || abort_update "archive is missing main.py"
+        [ -f "${new_root}/dist/index.js" ] || abort_update "archive is missing dist/index.js"
+
+        echo "Update validated. Swapping it in..."
+        backup_dir=""
+        if $NSL_PLUGIN_EXISTS; then
+            backup_dir="${LOCAL_DIR}.old.$$"
+            mv "$LOCAL_DIR" "$backup_dir" || abort_update "could not move the old plugin aside"
+        fi
+
+        if ! mv "$new_root" "$LOCAL_DIR"; then
+            # Zuruecktauschen, damit die alte Installation weiterlaeuft.
+            [ -n "$backup_dir" ] && mv "$backup_dir" "$LOCAL_DIR"
+            abort_update "could not move the new plugin into place"
+        fi
+
+        chmod -R u+rw "$LOCAL_DIR"
+        chown -R $logged_in_user:$logged_in_user "$LOCAL_DIR"
+        [ -n "$backup_dir" ] && rm -rf "$backup_dir"
+        rm -rf "$staging_root"
 
         chmod -R u-w "$LOCAL_DIR"
     fi
