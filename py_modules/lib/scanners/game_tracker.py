@@ -18,22 +18,22 @@ def normalize_appname(name):
 
 
 def desktop_match_key(name):
-    """Vergleichsschluessel fuer .desktop-Dateinamen.
+    """Comparison key for .desktop file names.
 
-    Beim Anlegen werden in Dateinamen ungueltige Zeichen entfernt: aus einem
-    Spielnamen mit Doppelpunkt wird eine Datei ohne ihn, also aus
-    'Titel: Untertitel' die Datei 'Titel Untertitel.desktop'. Der Abgleich
-    lief bis 2026-07-27 ueber den Rohnamen mit blossem lower(), traf deshalb
-    nicht und liess die tote Verknuepfung liegen (im Log zweimal
+    Characters that are invalid in file names are stripped on creation: a
+    game name containing a colon turns into a file without it, so
+    'Title: Subtitle' becomes 'Title Subtitle.desktop'. Until 2026-07-27 the
+    lookup compared the raw name with a plain lower(), therefore never
+    matched and left the dead entry behind (logged twice as
     'No .desktop file found').
-    Beidseitig alles ausser a-z0-9 zu entfernen macht den Vergleich
-    unabhaengig von der Sanitisierung.
+    Stripping everything except a-z0-9 on both sides makes the comparison
+    independent of that sanitisation.
     """
     return re.sub(r'[^a-z0-9]+', '', (name or "").lower())
 
 
 def desktop_name_matches(filename, wanted_key):
-    """True, wenn die .desktop-Datei zum gesuchten Spielnamen gehoert."""
+    """True if the .desktop file belongs to the requested game name."""
     if not filename.lower().endswith(".desktop"):
         return False
     return desktop_match_key(filename[:-len(".desktop")]) == wanted_key
