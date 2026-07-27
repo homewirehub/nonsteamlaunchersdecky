@@ -52,7 +52,7 @@ for arg in "${args[@]}"; do
     logged_in_home=$(eval echo "~${logged_in_user}")
 
     # Set the remote repository URL
-    REPO_URL="https://github.com/moraroy/NonSteamLaunchersDecky/archive/refs/heads/main.zip"
+    REPO_URL="https://github.com/homewirehub/NonSteamLaunchersDecky/archive/refs/heads/main.zip"
 
     # Set the local directory path
     LOCAL_DIR="${logged_in_home}/homebrew/plugins/NonSteamLaunchers"
@@ -70,7 +70,7 @@ for arg in "${args[@]}"; do
     fi
 
     # Set version check variables
-    GITHUB_URL="https://raw.githubusercontent.com/moraroy/NonSteamLaunchersDecky/main/package.json"
+    GITHUB_URL="https://raw.githubusercontent.com/homewirehub/NonSteamLaunchersDecky/main/package.json"
 
     # Function to fetch GitHub package.json
     fetch_github_version() {
