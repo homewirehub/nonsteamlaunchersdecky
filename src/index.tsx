@@ -39,7 +39,7 @@ const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
   const launcherOptions = initialOptions.filter((option) => option.streaming === false);
   const streamingOptions = initialOptions.filter((option) => option.streaming === true);
 
-  const { settings, setAutoScan, setPlaytimeEnabled, setThemeMusicEnabled } = useSettings(serverAPI);
+  const { settings, setAutoScan, setPlaytimeEnabled, setThemeMusicEnabled, setLocalGamesEnabled } = useSettings(serverAPI);
 
   // Random Greetings
   const greetings = [
@@ -268,6 +268,12 @@ const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
               initThemeMusic();
             }
           }}
+        />
+        <ToggleField
+          label="Local Games (~/Games)"
+          description="Also add Windows games that are already unpacked in ~/Games. Unlike the launcher scanners this one has no database to read and decides from the folder contents, so folders without a usable .exe are skipped. Delete a game's folder and its shortcut is removed on a later scan."
+          checked={settings.localGamesEnabled}
+          onChange={(value) => setLocalGamesEnabled(value)}
         />
       </PanelSection>
 

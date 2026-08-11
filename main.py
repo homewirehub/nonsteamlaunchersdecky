@@ -65,7 +65,8 @@ class Plugin:
         decky_plugin.logger.info("This is _main being called")
         self.settings = SettingsManager(name="config", settings_directory=decky_plugin.DECKY_PLUGIN_SETTINGS_DIR)
         decky_user_home = decky_plugin.DECKY_USER_HOME
-        defaultSettings = {"autoscan": False, "customSites": ""}
+        defaultSettings = {"autoscan": False, "customSites": "",
+                           "localGamesEnabled": False, "localGamesPath": ""}
 
 
         # Function to fetch GitHub commit history for patch notes

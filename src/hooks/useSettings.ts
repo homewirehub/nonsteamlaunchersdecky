@@ -7,6 +7,11 @@ export type Settings = {
   playtimeEnabled: boolean;
   thememusicEnabled: boolean;
   removeShortcutOnUninstall: boolean;
+  // Off by default: this scanner guesses from folder contents instead of
+  // reading a launcher database, so the user opts in explicitly.
+  localGamesEnabled: boolean;
+  // Empty means the default (~/Games); the scanner resolves it.
+  localGamesPath: string;
 };
 
 export const useSettings = (serverApi: ServerAPI) => {
@@ -16,6 +21,8 @@ export const useSettings = (serverApi: ServerAPI) => {
     playtimeEnabled: true,
     thememusicEnabled: true,
     removeShortcutOnUninstall: false,
+    localGamesEnabled: false,
+    localGamesPath: "",
   });
 
   // Load saved settings on mount
@@ -70,6 +77,14 @@ export const useSettings = (serverApi: ServerAPI) => {
     updateSettings('removeShortcutOnUninstall', value);
   }
 
+  function setLocalGamesEnabled(value: Settings['localGamesEnabled']) {
+    updateSettings('localGamesEnabled', value);
+  }
+
+  function setLocalGamesPath(value: Settings['localGamesPath']) {
+    updateSettings('localGamesPath', value);
+  }
+
   return {
     settings,
     setAutoScan,
@@ -77,5 +92,7 @@ export const useSettings = (serverApi: ServerAPI) => {
     setPlaytimeEnabled,
     setThemeMusicEnabled,
     setRemoveShortcutOnUninstall,
+    setLocalGamesEnabled,
+    setLocalGamesPath,
   };
 };

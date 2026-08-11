@@ -432,6 +432,8 @@
           playtimeEnabled: true,
           thememusicEnabled: true,
           removeShortcutOnUninstall: false,
+          localGamesEnabled: false,
+          localGamesPath: "",
       });
       // Load saved settings on mount
       React.useEffect(() => {
@@ -473,6 +475,12 @@
       function setRemoveShortcutOnUninstall(value) {
           updateSettings('removeShortcutOnUninstall', value);
       }
+      function setLocalGamesEnabled(value) {
+          updateSettings('localGamesEnabled', value);
+      }
+      function setLocalGamesPath(value) {
+          updateSettings('localGamesPath', value);
+      }
       return {
           settings,
           setAutoScan,
@@ -480,6 +488,8 @@
           setPlaytimeEnabled,
           setThemeMusicEnabled,
           setRemoveShortcutOnUninstall,
+          setLocalGamesEnabled,
+          setLocalGamesPath,
       };
   };
 
@@ -2281,7 +2291,7 @@
       console.log('Content rendered');
       const launcherOptions = initialOptions.filter((option) => option.streaming === false);
       const streamingOptions = initialOptions.filter((option) => option.streaming === true);
-      const { settings, setAutoScan, setPlaytimeEnabled, setThemeMusicEnabled } = useSettings(serverAPI);
+      const { settings, setAutoScan, setPlaytimeEnabled, setThemeMusicEnabled, setLocalGamesEnabled } = useSettings(serverAPI);
       // Random Greetings
       const greetings = [
           "Welcome to NSL!", "Hello, happy gaming!", "Good to see you again!",
@@ -2439,7 +2449,8 @@
                       if (value) {
                           initThemeMusic();
                       }
-                  } })),
+                  } }),
+              window.SP_REACT.createElement(deckyFrontendLib.ToggleField, { label: "Local Games (~/Games)", description: "Also add Windows games that are already unpacked in ~/Games. Unlike the launcher scanners this one has no database to read and decides from the folder contents, so folders without a usable .exe are skipped. Delete a game's folder and its shortcut is removed on a later scan.", checked: settings.localGamesEnabled, onChange: (value) => setLocalGamesEnabled(value) })),
           window.SP_REACT.createElement(deckyFrontendLib.PanelSection, { title: "For Support and Donations" },
               window.SP_REACT.createElement("div", { style: {
                       backgroundColor: "transparent",

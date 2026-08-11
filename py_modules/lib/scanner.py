@@ -34,6 +34,7 @@ from scanners.stove_scanner import stove_scanner
 from scanners.gryphlink_scanner import gryphlink_scanner
 
 from scanners.geforcenow_scanner import geforcenow_scanner
+from scanners.local_games_scanner import local_games_scanner
 from scanners.rpw_scanner import rpw_scanner
 from scanners.chrome_scanner import chrome_scanner
 from scanners.waydroid_scanner import waydroid_scanner
@@ -228,6 +229,7 @@ def scan():
             (stove_scanner, logged_in_home, stove_launcher, create_new_entry),
             (gryphlink_scanner, logged_in_home, gryphlink_launcher, create_new_entry),
 
+            (local_games_scanner, logged_in_home, create_new_entry),
             (rpw_scanner, logged_in_home, create_new_entry),
             (chrome_scanner, logged_in_home, create_new_entry),
             (waydroid_scanner, logged_in_home, create_new_entry),
