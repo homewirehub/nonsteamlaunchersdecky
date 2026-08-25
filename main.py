@@ -588,9 +588,19 @@ class Plugin:
 
                 # exception
                 {"name": 'remotePlayWhatever', "env_var": None, "label": 'RemotePlayWhatever', "file_check": f"{decky_user_home}/.local/share/applications/RemotePlayWhatever"},
-                {"name": 'nvidiaGeForcenow', "env_var": None, "label": 'NVIDIA GeForce NOW', "file_check": f"{decky_user_home}/.local/share/flatpak/app/com.nvidia.geforcenow/x86_64/master/active/files/bin/GeForceNOW"},
-                {"name": 'moonlightGameStreaming', "env_var": None, "label": 'Moonlight', "file_check": f"{decky_user_home}/.local/share/flatpak/app/com.moonlight_stream.Moonlight/x86_64/stable/active/files/bin/moonlight"},
-                {"name": 'hytale', "env_var": None, "label": 'Hytale', "file_check": f"{decky_user_home}/.local/share/flatpak/app/com.hypixel.HytaleLauncher/current/active/files/bin/hytale-launcher-wrapper"},
+                # Flatpaks may be installed per user or system wide. The
+                # installer in NonSteamLaunchers.sh accepts both, so the
+                # detection has to look in both places or a system-wide
+                # install is reported as missing.
+                {"name": 'nvidiaGeForcenow', "env_var": None, "label": 'NVIDIA GeForce NOW', "file_check": [
+                    f"{decky_user_home}/.local/share/flatpak/app/com.nvidia.geforcenow/x86_64/master/active/files/bin/GeForceNOW",
+                    "/var/lib/flatpak/app/com.nvidia.geforcenow/x86_64/master/active/files/bin/GeForceNOW"]},
+                {"name": 'moonlightGameStreaming', "env_var": None, "label": 'Moonlight', "file_check": [
+                    f"{decky_user_home}/.local/share/flatpak/app/com.moonlight_stream.Moonlight/x86_64/stable/active/files/bin/moonlight",
+                    "/var/lib/flatpak/app/com.moonlight_stream.Moonlight/x86_64/stable/active/files/bin/moonlight"]},
+                {"name": 'hytale', "env_var": None, "label": 'Hytale', "file_check": [
+                    f"{decky_user_home}/.local/share/flatpak/app/com.hypixel.HytaleLauncher/current/active/files/bin/hytale-launcher-wrapper",
+                    "/var/lib/flatpak/app/com.hypixel.HytaleLauncher/current/active/files/bin/hytale-launcher-wrapper"]},
             ]
 
             installed_launchers = []
@@ -628,7 +638,10 @@ class Plugin:
 
                     # Check if the launcher has a file check (like 'remotePlayWhatever')
                     if launcher_file_check:
-                        if os.path.exists(launcher_file_check):
+                        candidates = (launcher_file_check
+                                      if isinstance(launcher_file_check, (list, tuple))
+                                      else [launcher_file_check])
+                        if any(os.path.exists(path) for path in candidates):
                             installed_launchers.append(launcher_name)
 
                     # Otherwise, check the environment variable (standard launchers)

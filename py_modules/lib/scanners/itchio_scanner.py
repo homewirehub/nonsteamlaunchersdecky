@@ -25,36 +25,53 @@ def itchio_games_scanner(logged_in_home, itchio_launcher, create_new_entry):
     conn = sqlite3.connect(itch_db_location)
     cursor = conn.cursor()
 
-    # Parse the 'caves' table
-    cursor.execute("SELECT * FROM caves;")
+    # Columns are selected by name, not by position. butler's schema has
+    # gained a column since this scanner was written: 'verdict' used to sit
+    # at index 11, which now holds 'local_last_run_at' and is NULL. Reading
+    # position 11 handed json.loads() a None and aborted the entire itch.io
+    # scan with "the JSON object must be str, bytes or bytearray, not
+    # NoneType", so no itch.io game was reported at all.
+    cursor.execute("SELECT game_id, verdict FROM caves;")
     caves = cursor.fetchall()
 
-    # Parse the 'games' table
-    cursor.execute("SELECT * FROM games;")
+    cursor.execute("SELECT id, title FROM games;")
     games = cursor.fetchall()
 
     # Create a dictionary to store game information
-    games_dict = {game[0]: game for game in games}
+    games_dict = {game[0]: game[1] for game in games}
 
     # Match game_id between 'caves' and 'games' tables
     itchgames = []
-    for cave in caves:
-        game_id = cave[1]
-        if game_id in games_dict:
-            game_info = games_dict[game_id]
-            base_path = json.loads(cave[11])['basePath']
-            candidates = json.loads(cave[11])['candidates']
+    for game_id, verdict in caves:
+        if game_id not in games_dict:
+            continue
+        game_title = games_dict[game_id]
 
-            # Check if 'candidates' is not None and has at least one element
-            if candidates and isinstance(candidates, list) and len(candidates) > 0:
-                executable_path = candidates[0].get('path')  # Use `.get()` to avoid KeyError
-                if executable_path and executable_path.endswith('.html'):
-                    decky_plugin.logger.info(f"Skipping browser game: {game_info[2]}")
-                    continue
-                game_title = game_info[2]
-                itchgames.append((base_path, executable_path, game_title))
-            else:
-                decky_plugin.logger.warning(f"No candidates found for game: {game_info[2]}")
+        # One unreadable row must not take the rest of the library with it.
+        if not verdict:
+            decky_plugin.logger.warning(f"No verdict recorded for game: {game_title}. Skipping.")
+            continue
+        try:
+            parsed = json.loads(verdict)
+        except (ValueError, TypeError) as exc:
+            decky_plugin.logger.warning(f"Unreadable verdict for game: {game_title} ({exc}). Skipping.")
+            continue
+
+        base_path = parsed.get('basePath')
+        candidates = parsed.get('candidates')
+        if not base_path:
+            decky_plugin.logger.warning(f"No basePath for game: {game_title}. Skipping.")
+            continue
+
+        # Check if 'candidates' is not None and has at least one element
+        if candidates and isinstance(candidates, list) and len(candidates) > 0:
+            executable_path = candidates[0].get('path')  # Use `.get()` to avoid KeyError
+            if executable_path and executable_path.endswith('.html'):
+                decky_plugin.logger.info(f"Skipping browser game: {game_title}")
+                continue
+            itchgames.append((base_path, executable_path, game_title))
+        else:
+            decky_plugin.logger.warning(f"No candidates found for game: {game_title}")
 
     for game in itchgames:
         base_path, executable, game_title = game
