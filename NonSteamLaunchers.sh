@@ -2813,6 +2813,14 @@ function install_launcher {
             appid=NonSteamLaunchers
         fi
 
+        # Battle.net always gets a prefix of its own.  In the shared prefix
+        # its embedded Chromium never creates a page: the login window stays
+        # empty and not a single request leaves the client, while the very
+        # same build logs in normally from a prefix that holds nothing else.
+        if [ "$launcher_name" = "Battle.net" ]; then
+            appid=${appid_name}
+        fi
+
         # Create app id folder in compatdata folder if it doesn't exist
         if [ ! -d "${logged_in_home}/.local/share/Steam/steamapps/compatdata/$appid" ]; then
             mkdir -p "${logged_in_home}/.local/share/Steam/steamapps/compatdata/$appid"
