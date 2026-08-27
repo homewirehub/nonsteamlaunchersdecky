@@ -92,7 +92,7 @@ def load(answers):
         "subprocess": FakeSubprocess,
         "decky_plugin": DeckyStub,
     }
-    exec(extract(MAIN, {"x_authority_candidates", "resolve_x_display"}), g)
+    exec(extract(MAIN, {"x_authority_candidates", "x_display_candidates", "resolve_x_display"}), g)
     return g, calls
 
 
@@ -161,6 +161,24 @@ def test_probe_picks_the_file_that_answers():
         check("a missing xhost is a no, not a crash", g["resolve_x_display"](env) is False)
 
 
+def test_probe_tries_active_display_when_inherited_one_is_stale():
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = os.path.join(tmp, "run")
+        home = os.path.join(tmp, "home")
+        os.makedirs(runtime)
+        os.makedirs(home)
+        session = os.path.join(runtime, "xauth_abc123")
+        open(session, "w").close()
+
+        g, calls = load({session: 0})
+        # A direct helper test keeps this independent of the host's sockets.
+        displays = g["x_display_candidates"]({"DISPLAY": ":0"})
+        check("the inherited display stays first", displays[0] == ":0", str(displays))
+        env = {"XDG_RUNTIME_DIR": runtime, "HOME": home, "DISPLAY": ":0"}
+        check("a valid display remains usable", g["resolve_x_display"](env) is True)
+        check("the probe receives a display", all(c[0][0] == "xhost" for c in calls), str(calls))
+
+
 def test_install_no_longer_guesses():
     with open(MAIN) as f:
         source = f.read()
@@ -199,6 +217,7 @@ def test_install_no_longer_guesses():
 if __name__ == "__main__":
     test_candidate_order()
     test_probe_picks_the_file_that_answers()
+    test_probe_tries_active_display_when_inherited_one_is_stale()
     test_install_no_longer_guesses()
     print()
     if failures:

@@ -63,6 +63,22 @@ def x_authority_candidates(env):
     return ordered
 
 
+def x_display_candidates(env):
+    """Return the requested X display followed by active local X sockets.
+
+    Game Mode can leave more than one Xwayland socket behind.  Decky often
+    inherits ``:0`` even when Gamescope is currently serving clients on
+    ``:1``; probing only the inherited value makes graphical installers fail
+    despite a valid session cookie being available.
+    """
+    candidates = [env.get('DISPLAY')]
+    for socket in glob.glob('/tmp/.X11-unix/X*'):
+        name = os.path.basename(socket)
+        if name[1:].isdigit():
+            candidates.append(f':{name[1:]}')
+    return list(dict.fromkeys(display for display in candidates if display))
+
+
 def resolve_x_display(env):
     """Point env at an X server the installer can really draw on.
 
@@ -73,22 +89,25 @@ def resolve_x_display(env):
     installer script had run a single line. Guessing is what broke it, so
     this asks instead.
     """
-    for authority in x_authority_candidates(env):
-        probe = dict(env, XAUTHORITY=authority)
-        try:
-            answered = subprocess.run(
-                ['xhost'], env=probe, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=10).returncode == 0
-        except (OSError, subprocess.SubprocessError) as e:
-            decky_plugin.logger.info(f"X probe with {authority} failed: {e}")
-            answered = False
-        if answered:
-            env['XAUTHORITY'] = authority
-            decky_plugin.logger.info(
-                f"X display {env.get('DISPLAY')} answered with XAUTHORITY={authority}")
-            return True
+    requested_display = env.get('DISPLAY')
+    for display in x_display_candidates(env):
+        for authority in x_authority_candidates(env):
+            probe = dict(env, DISPLAY=display, XAUTHORITY=authority)
+            try:
+                answered = subprocess.run(
+                    ['xhost'], env=probe, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=10).returncode == 0
+            except (OSError, subprocess.SubprocessError) as e:
+                decky_plugin.logger.info(f"X probe with {authority} on {display} failed: {e}")
+                answered = False
+            if answered:
+                env['DISPLAY'] = display
+                env['XAUTHORITY'] = authority
+                decky_plugin.logger.info(
+                    f"X display {display} answered with XAUTHORITY={authority}")
+                return True
     decky_plugin.logger.warning(
-        f"No X display answered at {env.get('DISPLAY')} - running the installer "
+        f"No X display answered (requested {requested_display}) - running the installer "
         "without a terminal window; its output stays in this log")
     return False
 
