@@ -15,6 +15,7 @@ add_plugin_to_path()
 
 
 import os
+import glob
 import logging
 import re
 import asyncio
@@ -38,6 +39,58 @@ logging.basicConfig(level=logging.DEBUG)
 def camel_to_snake(s):
     """Convert camelCase to snake_case."""
     return re.sub(r'([a-z])([A-Z])', r'\1_\2', s).lower()
+
+
+def x_authority_candidates(env):
+    """Auth files that might unlock this session's X server, best first.
+
+    Which file holds the cookie is a property of the session, not of the
+    user: a gamescope session writes a per-boot file under
+    XDG_RUNTIME_DIR, while ~/.Xauthority is a desktop-session convention
+    that does not exist on a Steam Deck in Game Mode. Only paths that
+    exist are returned, in the order they should be tried.
+    """
+    candidates = [env.get('XAUTHORITY'), os.environ.get('XAUTHORITY')]
+    runtime_dir = env.get('XDG_RUNTIME_DIR') or f"/run/user/{os.getuid()}"
+    candidates += sorted(glob.glob(os.path.join(runtime_dir, 'xauth_*')),
+                         key=os.path.getmtime, reverse=True)
+    home = env.get('HOME') or os.path.expanduser('~')
+    candidates.append(os.path.join(home, '.Xauthority'))
+    ordered = []
+    for path in candidates:
+        if path and path not in ordered and os.path.exists(path):
+            ordered.append(path)
+    return ordered
+
+
+def resolve_x_display(env):
+    """Point env at an X server the installer can really draw on.
+
+    Returns True if a display answered, and sets env['XAUTHORITY'] to the
+    file that made it answer. A hardcoded ~/.Xauthority used to make both
+    xhost and xterm fail with "Can't open display", which killed every
+    install about thirty milliseconds after the click - before the
+    installer script had run a single line. Guessing is what broke it, so
+    this asks instead.
+    """
+    for authority in x_authority_candidates(env):
+        probe = dict(env, XAUTHORITY=authority)
+        try:
+            answered = subprocess.run(
+                ['xhost'], env=probe, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=10).returncode == 0
+        except (OSError, subprocess.SubprocessError) as e:
+            decky_plugin.logger.info(f"X probe with {authority} failed: {e}")
+            answered = False
+        if answered:
+            env['XAUTHORITY'] = authority
+            decky_plugin.logger.info(
+                f"X display {env.get('DISPLAY')} answered with XAUTHORITY={authority}")
+            return True
+    decky_plugin.logger.warning(
+        f"No X display answered at {env.get('DISPLAY')} - running the installer "
+        "without a terminal window; its output stays in this log")
+    return False
 
 def camel_to_title(s):
     # Split the string into words using a regular expression
@@ -953,10 +1006,13 @@ class Plugin:
         decky_plugin.logger.info(f"Running command: {command}")
 
         # Set up the environment for the new process
+        # XAUTHORITY is deliberately absent here: it is resolved against
+        # the live session inside the worker, because the file that
+        # unlocks the display differs between a desktop and a gamescope
+        # session and a wrong guess costs the whole install.
         env = os.environ.copy()
         env.update({
-            'DISPLAY': ':0',
-            'XAUTHORITY': os.path.join(os.environ['HOME'], '.Xauthority'),
+            'DISPLAY': os.environ.get('DISPLAY') or ':0',
             'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             'LD_LIBRARY_PATH': '/usr/lib:/lib:/usr/lib32:/lib32'
         })
@@ -966,24 +1022,21 @@ class Plugin:
         # and the /logUpdates live stream - stays responsive for the whole
         # install.
         def run_installer_script():
-            # Temporarily disable access control for the X server
-            run(['xhost', '+'])
+            # Ask the session which auth file opens the display before
+            # anything is started with it.
+            display_ready = resolve_x_display(env)
+            if display_ready:
+                # Temporarily disable access control for the X server
+                run(['xhost', '+'], env=env)
             try:
-                # Check if xterm exists before attempting to use it
-                try:
-                    xterm_check = subprocess.run(['which', 'xterm'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    if xterm_check.returncode == 0:
-                        # xterm is found, use it only if necessary
-                        decky_plugin.logger.info("xterm found. Running command in xterm.")
-                        process = Popen(f"xterm -e {command}", shell=True, env=env)
-                    else:
-                        # xterm not found, run command directly
-                        decky_plugin.logger.info("xterm not found. Running command directly.")
-                        process = Popen(command, shell=True, env=env)
-                except Exception as e:
-                    decky_plugin.logger.error(f"Error checking xterm: {e}")
-                    # Fallback to running the command directly if there was an error checking xterm
-                    decky_plugin.logger.info("Error checking xterm, falling back to subprocess.")
+                # A terminal window is a convenience, never a requirement:
+                # the install runs either way, and the plugin streams the
+                # script's output itself.
+                if display_ready and shutil.which('xterm'):
+                    decky_plugin.logger.info("xterm found. Running command in xterm.")
+                    process = Popen(f"xterm -e {command}", shell=True, env=env)
+                else:
+                    decky_plugin.logger.info("Running command directly, without xterm.")
                     process = Popen(command, shell=True, env=env)
 
                 # Wait for the script to complete and get the exit code
@@ -991,7 +1044,8 @@ class Plugin:
             finally:
                 # Re-enable access control for the X server, even if the
                 # script could not be started
-                run(['xhost', '-'])
+                if display_ready:
+                    run(['xhost', '-'], env=env)
 
         # The installer script rewrites state a concurrent scan would read
         # mid-flight (env_vars, the launcher prefixes; Start Fresh deletes
