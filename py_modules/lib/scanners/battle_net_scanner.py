@@ -90,6 +90,10 @@ def battle_net_scanner(logged_in_home, bnet_launcher, create_new_entry):
         )
     else:
         decky_plugin.logger.info("Detected platform: Non-Windows")
+        if not bnet_launcher:
+            decky_plugin.logger.info(
+                "Battle.net is not installed. Skipping Battle.net Games Scanner.")
+            return
         config_file_path = (
             f"{logged_in_home}/.local/share/Steam/steamapps/"
             f"compatdata/{bnet_launcher}/pfx/drive_c/users/"

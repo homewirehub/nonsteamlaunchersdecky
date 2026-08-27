@@ -1439,6 +1439,46 @@ gryph_file="${logged_in_home}/Downloads/NonSteamLaunchersInstallation/GRYPHLINK_
 
 
 
+# Proton has to run inside a Steam runtime container, not on the bare host.
+# SteamOS ships no 32-bit gnutls, so Wine's 32-bit Schannel registers no
+# security provider outside the container and every 32-bit installer that
+# speaks HTTPS fails there - the Battle.net setup dies with
+# BLZBNTBTS00000028 while it fetches its version file.  The legacy
+# ubuntu12_32 entry point does not enter a container at all; it prints a
+# warning and runs on the host, so it is only the last resort.
+#
+# The container entry point parses every argument it recognises as its own
+# option, so the command has to be separated with "--" (Battle.net passes
+# --lang and --installpath).  The legacy entry point would try to execute
+# that "--", so it must not get one: STEAM_RUNTIME keeps the bare path and
+# STEAM_RUNTIME_CMD is the prefix that actually launches Proton.
+resolve_steam_runtime() {
+    local runtime_dir="${logged_in_home}/.local/share/Steam/steamapps/common"
+    local candidate
+
+    for candidate in "${runtime_dir}/SteamLinuxRuntime_4/run" \
+                     "${runtime_dir}/SteamLinuxRuntime_sniper/run"; do
+        [ -x "$candidate" ] || continue
+        # The container brings its own Python and Proton runs on it.  Current
+        # GE-Proton needs 3.11+ (typing.Self); sniper is still on 3.9 and
+        # would fail with an ImportError before Proton starts.
+        if "$candidate" -- /usr/bin/env python3 -c \
+            'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' \
+            >/dev/null 2>&1; then
+            STEAM_RUNTIME="$candidate"
+            STEAM_RUNTIME_CMD=("$candidate" --)
+            echo "Using Steam runtime container: $candidate"
+            return 0
+        fi
+    done
+
+    STEAM_RUNTIME="${logged_in_home}/.steam/root/ubuntu12_32/steam-runtime/run.sh"
+    STEAM_RUNTIME_CMD=("$STEAM_RUNTIME")
+    echo "No usable Steam runtime container found - running Proton on the host."
+    echo "32-bit installers that need HTTPS (Battle.net) will fail there."
+    return 1
+}
+
 # Function to handle common uninstallation tasks
 handle_uninstall_common() {
     compatdata_dir=$1
@@ -1450,7 +1490,7 @@ handle_uninstall_common() {
     proton_dir=$(find -L "${logged_in_home}/.steam/root/compatibilitytools.d" -maxdepth 1 -type d -name "GE-Proton*" | sort -V | tail -n1)
 
     # Set the paths for the environment variables
-    STEAM_RUNTIME="${logged_in_home}/.steam/root/ubuntu12_32/steam-runtime/run.sh"
+    resolve_steam_runtime
     STEAM_COMPAT_CLIENT_INSTALL_PATH="${logged_in_home}/.local/share/Steam"
     STEAM_COMPAT_DATA_PATH="${logged_in_home}/.local/share/Steam/steamapps/compatdata/${compatdata_dir}"
 
@@ -1460,7 +1500,7 @@ handle_uninstall_common() {
 
     # Run the uninstaller using Proton with the specified options
     echo "Running uninstaller using Proton with the specified options"
-    "$STEAM_RUNTIME" "$proton_dir/proton" run "$uninstaller_path" $uninstaller_options
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$uninstaller_path" $uninstaller_options
 
     # Display Zenity window
     zenity --info --text="$app_name has been uninstalled." --width=200 --height=150 &
@@ -2252,7 +2292,8 @@ fi
 cd $proton_dir
 
 # Set the STEAM_RUNTIME environment variable
-export STEAM_RUNTIME="${logged_in_home}/.steam/root/ubuntu12_32/steam-runtime/run.sh"
+resolve_steam_runtime
+export STEAM_RUNTIME
 
 # Set the STEAM_COMPAT_CLIENT_INSTALL_PATH environment variable
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="${logged_in_home}/.local/share/Steam"
@@ -2362,7 +2403,7 @@ function install_gog {
 
     # Run GalaxySetup.exe with the /VERYSILENT and /NORESTART options
     echo "Running GalaxySetup.exe with the /VERYSILENT and /NORESTART options"
-    "$STEAM_RUNTIME" "$proton_dir/proton" run GalaxySetup.exe /VERYSILENT /NORESTART &
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run GalaxySetup.exe /VERYSILENT /NORESTART &
 
     # Wait for the GalaxySetup.exe to finish running with a timeout of 90 seconds
     end=$((SECONDS+90))  # Timeout after 90 seconds
@@ -2424,18 +2465,45 @@ function install_gog2 {
 
 # Battle.net specific installation steps
 function install_battlenet {
-    # Terminate any existing Battle.net processes before starting installation
-    #terminate_processes "Battle.net.exe" #"BlizzardError.exe"
+    # The Blizzard agent authorises its caller by the signature of the calling
+    # executable and refuses anything it cannot verify.  Started from the
+    # host-mapped drive it answers every request with
+    #   Failed Caller authorization due to signature for
+    #   'X:/Downloads/.../Battle.net-Setup.exe'
+    # and the setup then spins forever on "Agent init returned status
+    # code=401".  The same binary started from inside the prefix is accepted,
+    # so copy it into drive_c and run it from there.
+    local prefix_setup="$STEAM_COMPAT_DATA_PATH/pfx/drive_c/Battle.net-Setup.exe"
+    if ! cp -f "$battle_file" "$prefix_setup"; then
+        echo "Could not copy the Battle.net setup into the prefix."
+        return 1
+    fi
 
-
-    # Start the first installation
     echo "Starting first installation of Battle.net"
-    "$STEAM_RUNTIME" "$proton_dir/proton" run "$battle_file" Battle.net-Setup.exe --lang=enUS --installpath="C:\Program Files (x86)\Battle.net"
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$prefix_setup" Battle.net-Setup.exe --lang=enUS --installpath="C:\Program Files (x86)\Battle.net" &
+    local installer_pid=$!
 
-    # Optional: kill wineserver after installation is completely done
-    #pkill wineserver
+    # Battle.net-Setup.exe is only a bootstrapper: it hands the work to the
+    # agent and keeps running afterwards, so wait for the launcher executable
+    # to appear instead of waiting for the process to end.
+    local battlenet_exe="$STEAM_COMPAT_DATA_PATH/pfx/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
+    local deadline=$((SECONDS + 600))
+    echo "Waiting for the Battle.net bootstrapper to finish..."
+    while [ ! -f "$battlenet_exe" ] && [ "$SECONDS" -lt "$deadline" ] \
+          && kill -0 "$installer_pid" 2>/dev/null; do
+        sleep 2
+    done
+
+    terminate_processes "Battle.net-Setup.exe"
+    wait "$installer_pid" 2>/dev/null
+    rm -f "$prefix_setup"
+
+    if [ ! -f "$battlenet_exe" ]; then
+        echo "Battle.net installation did not create its launcher executable; installation failed."
+        return 1
+    fi
+
     echo "Battle.net installation complete."
-
     sleep 1
 }
 
@@ -2475,7 +2543,7 @@ function install_humblegames {
     export STEAM_COMPAT_DATA_PATH=~/.steam/steam/steamapps/compatdata/$appid
     FIXED_SCHEME="\$(echo "\$1" | sed "s/?/\//")"
     echo \$FIXED_SCHEME > "${logged_in_home}/.local/share/Steam/steamapps/compatdata/$appid/pfx/drive_c/.auth"
-    "$STEAM_RUNTIME" "$proton_dir/proton" run ~/.local/share/Steam/steamapps/compatdata/$appid/pfx/start-humble.cmd
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run ~/.local/share/Steam/steamapps/compatdata/$appid/pfx/start-humble.cmd
 EOF
     chmod +x "${logged_in_home}/.local/share/Steam/steamapps/compatdata/$appid/pfx/handle-humble-scheme"
 
@@ -2589,11 +2657,11 @@ function install_rockstar {
     )
 
     for key in "${!registry_keys[@]}"; do
-    "$STEAM_RUNTIME" "$proton_dir/proton" run reg add "$wine_registry_path" /v "$key" /t REG_SZ /d "${registry_keys[$key]}" /f
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run reg add "$wine_registry_path" /v "$key" /t REG_SZ /d "${registry_keys[$key]}" /f
     done
 
-    "$STEAM_RUNTIME" "$proton_dir/proton" run "$rstarInstallDir/Redistributables/VCRed/vc_redist.x64.exe" /install /quiet /norestart
-    "$STEAM_RUNTIME" "$proton_dir/proton" run "$rstarInstallDir/Redistributables/VCRed/vc_redist.x86.exe" /install /quiet /norestart
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$rstarInstallDir/Redistributables/VCRed/vc_redist.x64.exe" /install /quiet /norestart
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$rstarInstallDir/Redistributables/VCRed/vc_redist.x86.exe" /install /quiet /norestart
     wait
 }
 
@@ -2637,7 +2705,7 @@ function install_hoyo {
     cp "${target_dir}/launcher.exe" "${hoyo_dir}/launcher.exe" || { echo "Failed to copy launcher.exe"; return 1; }
 
     echo "Running HYP.exe..."
-    "$STEAM_RUNTIME" "$proton_dir/proton" run "${target_dir}/HYP.exe" || { echo "Failed to run HYP.exe"; return 1; } &
+    "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "${target_dir}/HYP.exe" || { echo "Failed to run HYP.exe"; return 1; } &
     sleep 5  # Wait for 5 seconds before terminating HYP.exe
     terminate_processes "HYP.exe"
 
@@ -2659,7 +2727,7 @@ install_psplus() {
         echo "Download successful. Running $installer silently..."
 
         # Start the installer with Proton and capture PID
-        "$STEAM_RUNTIME" "$proton_dir/proton" run "$installer"  /q /norestart &
+        "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$installer"  /q /norestart &
         local pid=$!
 
         echo "Installer PID: $pid. Waiting for it to complete..."
@@ -2797,22 +2865,24 @@ function install_launcher {
         echo "Running ${file_name} using Proton with the specified command"
         if [ "$run_in_background" = true ]; then
             if [ "$launcher_name" = "GOG Galaxy" ]; then
-                "$STEAM_RUNTIME" "$proton_dir/proton" run "$exe_file" /silent &
+                "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$exe_file" /silent &
                 install_gog2
             elif [ "$launcher_name" = "Battle.net" ]; then
-
-                install_battlenet
+                if ! install_battlenet; then
+                    echo "Battle.net installation failed"
+                    install_failures=$((install_failures + 1))
+                fi
             elif [ "$launcher_name" = "Amazon Games" ]; then
-                "$STEAM_RUNTIME" "$proton_dir/proton" run "$amazon_file" &
+                "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$amazon_file" &
                 install_amazon
             elif [ "$launcher_name" = "Humble Games Collection" ]; then
-                "$STEAM_RUNTIME" "$proton_dir/proton" run "$humblegames_file" /S /D="C:\Program Files\Humble App"
+                "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$humblegames_file" /S /D="C:\Program Files\Humble App"
                 wait
                 install_humblegames
             elif [ "$launcher_name" = "Rockstar Games Launcher" ]; then
                 install_rockstar
             elif [ "$launcher_name" = "ARC Launcher" ]; then
-                "$STEAM_RUNTIME" "$proton_dir/proton" run "$arc_file"
+                "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run "$arc_file"
                 pid=$!
                 while pgrep -x "Arc3Install_202" > /dev/null; do
                     sleep 1
@@ -2820,10 +2890,10 @@ function install_launcher {
                 sleep 5
                 echo "ARC Launcher installation complete."
             else
-                "$STEAM_RUNTIME" "$proton_dir/proton" run ${run_command} &
+                "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run ${run_command} &
             fi
         else
-            "$STEAM_RUNTIME" "$proton_dir/proton" run ${run_command}
+            "${STEAM_RUNTIME_CMD[@]}" "$proton_dir/proton" run ${run_command}
         fi
 
 
@@ -3984,6 +4054,11 @@ rm -rf "$download_dir"
 
 
 
+
+if [ "${install_failures:-0}" -gt 0 ]; then
+    echo "Script completed with ${install_failures} failed installation(s)."
+    exit 1
+fi
 
 echo "Script completed successfully."
 
